@@ -60,7 +60,9 @@ Single-file script that does everything in one flow, top-to-bottom at module loa
    lat/lon/alt (via `ecefToLlh`) after the rest of argv is parsed, so it always overrides
    `--lat`/`--lon` regardless of flag order.
 2. `generateGGA()` / `calculateChecksum()` — build an NMEA `$GPGGA` sentence (with checksum) from
-   the configured position, sent to the caster every `gga_interval` ms (skipped if `0`).
+   the configured position, sent to the caster every `gga_interval` ms (skipped if `0`). The
+   degrees-to-minutes conversion must multiply the fractional degree by 60 (not 100) — this was
+   wrong in the original version and silently sent GEODNET an invalid position.
 3. RTCM3 framing and decoding, driven by incoming socket data:
    - `processRtcmBuffer()` finds `0xD3` sync bytes and reassembles complete frames across
      TCP chunk boundaries, handing each complete frame to `handleRtcmFrame()`.
@@ -70,8 +72,14 @@ Single-file script that does everything in one flow, top-to-bottom at module loa
    - When `debug` is on, each frame also gets a compact one-line real-time log via
      `describeFrameDetail()`, which understands 1005/1006 (station ID, ECEF XYZ, geodetic LLH,
      baseline distance to the configured receiver position, antenna height for 1006), 1033
-     (antenna/receiver descriptor strings), and MSM observation messages 1071-1137 (epoch time,
-     satellite/signal counts, resolved signal names via per-constellation `MSM_SIG_*` tables).
+     (antenna/receiver descriptor strings), MSM observation messages 1071-1137 (epoch time,
+     satellite/signal counts, resolved signal names via per-constellation `MSM_SIG_*` tables), and
+     ephemeris messages 1019/1020/1042/1044/1045/1046 (system, PRN, TOE as an absolute UTC
+     timestamp, satellite health, and age relative to now — via `decodeEph*`/`decodeEphGalileo`).
+     Ephemeris TOE reconstruction resolves each system's week number (handling the GPS/QZSS 10-bit
+     week rollover, the Galileo week+1024 GPS-epoch offset, BeiDou's own 2006 epoch, and GLONASS's
+     day-relative 15-minute index) and applies an approximate GPS-UTC/BDT-UTC leap-second offset —
+     good enough for the debug display, not precision timing.
    - `BitReader` is the shared MSB-first bit-field reader used by all the message decoders above;
      bit layouts and MSM signal ID tables were cross-checked against RTKLIB's `rtcm3.c` rather
      than derived from spec text alone, since off-by-one bit widths there fail silently.

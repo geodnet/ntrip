@@ -303,6 +303,168 @@ function decodeMsg1033(payload) {
   return { staid, antDescriptor, antSetupId, antSerial, recType, recFirmware, recSerial };
 }
 
+/* time system epochs/offsets used to turn ephemeris week+TOE into a UTC Date.
+   Leap-second offsets are approximate and only meant for the display below;
+   GPS-UTC has been 18s since the 2016-12-31 leap second (none since, as of
+   early 2026), and BDT-UTC = GPS-UTC - GPS-BDT(14s) = 4s. */
+const GPS_EPOCH_MS = Date.UTC(1980, 0, 6, 0, 0, 0);
+const BDT_EPOCH_MS = Date.UTC(2006, 0, 1, 0, 0, 0);
+const GPS_UTC_LEAP_SEC = 18;
+const BDT_UTC_LEAP_SEC = 4;
+const WEEK_MS = 7 * 86400 * 1000;
+
+/* resolve a truncated (mod 2^bits) week number to a full week count, by
+   picking the candidate closest to the week implied by the current time */
+function resolveWeek(rawWeek, bits, epochMs, refMs) {
+  const modulus = Math.pow(2, bits);
+  const approxWeek = Math.floor((refMs - epochMs) / WEEK_MS);
+  const rolloverBase = Math.floor(approxWeek / modulus) * modulus;
+  let best = rolloverBase + rawWeek;
+  for (const cand of [best - modulus, best, best + modulus]) {
+    if (Math.abs(cand - approxWeek) < Math.abs(best - approxWeek)) {
+      best = cand;
+    }
+  }
+  return best;
+}
+
+function toeFromGpsWeek(week, toes) {
+  return new Date(GPS_EPOCH_MS + week * WEEK_MS + toes * 1000 - GPS_UTC_LEAP_SEC * 1000);
+}
+
+function toeFromBdtWeek(week, toes) {
+  return new Date(BDT_EPOCH_MS + week * WEEK_MS + toes * 1000 - BDT_UTC_LEAP_SEC * 1000);
+}
+
+/* GLONASS has no week/TOE; tb is a 15-minute-interval index (0-96) within the
+   current day in Moscow time (UTC+3). Bracket against refDate's UTC day since
+   the message doesn't carry a date. */
+function toeFromGlonassTb(tb, refDate) {
+  const dayStartUtcMs = Date.UTC(refDate.getUTCFullYear(), refDate.getUTCMonth(), refDate.getUTCDate());
+  let candidateMs = dayStartUtcMs + (tb * 900 - 3 * 3600) * 1000;
+  const halfDayMs = 12 * 3600 * 1000;
+  const diff = candidateMs - refDate.getTime();
+  if (diff < -halfDayMs) {
+    candidateMs += 86400000;
+  } else if (diff > halfDayMs) {
+    candidateMs -= 86400000;
+  }
+  return new Date(candidateMs);
+}
+
+/* decode 1019 (GPS ephemeris) */
+function decodeEph1019(payload, now) {
+  const br = new BitReader(payload);
+  br.skip(12); /* message number */
+  let prn = br.readUnsigned(6);
+  const week10 = br.readUnsigned(10);
+  br.skip(4 + 2 + 14 + 8); /* sva, code, idot, iode */
+  br.skip(16); /* toc */
+  br.skip(8 + 16 + 22); /* f2, f1, f0 */
+  br.skip(10); /* iodc */
+  br.skip(16 + 16 + 32 + 16 + 32 + 16 + 32); /* crs, deln, M0, cuc, e, cus, sqrtA */
+  const toes = br.readUnsigned(16) * 16.0;
+  br.skip(16 + 32 + 16 + 32 + 16 + 32 + 24); /* cic, OMG0, cis, i0, crc, omg, OMGd */
+  br.skip(8); /* tgd */
+  const svh = br.readUnsigned(6);
+
+  let sys = 'GPS';
+  if (prn >= 40) {
+    sys = 'SBAS';
+    prn += 80;
+  }
+  const week = resolveWeek(week10, 10, GPS_EPOCH_MS, now.getTime());
+  return { sys, prn, svh, toe: toeFromGpsWeek(week, toes) };
+}
+
+/* decode 1044 (QZSS ephemeris) */
+function decodeEph1044(payload, now) {
+  const br = new BitReader(payload);
+  br.skip(12);
+  const prn = br.readUnsigned(4) + 192;
+  br.skip(16); /* toc */
+  br.skip(8 + 16 + 22); /* f2, f1, f0 */
+  br.skip(8); /* iode */
+  br.skip(16 + 16 + 32 + 16 + 32 + 16 + 32); /* crs, deln, M0, cuc, e, cus, sqrtA */
+  const toes = br.readUnsigned(16) * 16.0;
+  br.skip(16 + 32 + 16 + 32 + 16 + 32 + 24); /* cic, OMG0, cis, i0, crc, omg, OMGd */
+  br.skip(14 + 2); /* idot, code */
+  const week10 = br.readUnsigned(10);
+  br.skip(4); /* sva */
+  const svh = br.readUnsigned(6);
+
+  const week = resolveWeek(week10, 10, GPS_EPOCH_MS, now.getTime());
+  return { sys: 'QZSS', prn, svh, toe: toeFromGpsWeek(week, toes) };
+}
+
+/* decode 1045 (Galileo F/NAV) / 1046 (Galileo I/NAV) ephemeris */
+function decodeEphGalileo(payload, isInav, now) {
+  const br = new BitReader(payload);
+  br.skip(12);
+  const prn = br.readUnsigned(6);
+  const gstWeek = br.readUnsigned(12);
+  br.skip(10); /* iode */
+  br.skip(8); /* sva */
+  br.skip(14); /* idot */
+  br.skip(14); /* toc */
+  br.skip(6 + 21 + 31); /* f2, f1, f0 */
+  br.skip(16 + 16 + 32 + 16 + 32 + 16 + 32); /* crs, deln, M0, cuc, e, cus, sqrtA */
+  const toes = br.readUnsigned(14) * 60.0;
+  br.skip(16 + 32 + 16 + 32 + 16 + 32 + 24); /* cic, OMG0, cis, i0, crc, omg, OMGd */
+  let svh;
+  if (isInav) {
+    br.skip(10 + 10); /* tgd e5a/e1, tgd e5b/e1 */
+    const e5bHs = br.readUnsigned(2);
+    const e5bDvs = br.readUnsigned(1);
+    const e1Hs = br.readUnsigned(2);
+    const e1Dvs = br.readUnsigned(1);
+    svh = (e5bHs << 7) | (e5bDvs << 6) | (e1Hs << 1) | e1Dvs;
+  } else {
+    br.skip(10); /* tgd e5a/e1 */
+    const e5aHs = br.readUnsigned(2);
+    const e5aDvs = br.readUnsigned(1);
+    svh = (e5aHs << 4) | (e5aDvs << 3);
+  }
+
+  const gpsEquivWeek = gstWeek + 1024; /* Galileo week 0 = GPS week 1024 */
+  return { sys: 'Galileo', prn, svh, toe: toeFromGpsWeek(gpsEquivWeek, toes) };
+}
+
+/* decode 1042 (BeiDou ephemeris) */
+function decodeEph1042(payload) {
+  const br = new BitReader(payload);
+  br.skip(12);
+  const prn = br.readUnsigned(6);
+  const week = br.readUnsigned(13);
+  br.skip(4); /* sva */
+  br.skip(14); /* idot */
+  br.skip(5); /* iode (AODE) */
+  br.skip(17); /* toc */
+  br.skip(11 + 22 + 24); /* f2, f1, f0 */
+  br.skip(5); /* iodc (AODC) */
+  br.skip(18 + 16 + 32 + 18 + 32 + 18 + 32); /* crs, deln, M0, cuc, e, cus, sqrtA */
+  const toes = br.readUnsigned(17) * 8.0;
+  br.skip(18 + 32 + 18 + 32 + 18 + 32 + 24); /* cic, OMG0, cis, i0, crc, omg, OMGd */
+  br.skip(10 + 10); /* tgd0, tgd1 */
+  const svh = br.readUnsigned(1);
+
+  return { sys: 'BeiDou', prn, svh, toe: toeFromBdtWeek(week, toes) };
+}
+
+/* decode 1020 (GLONASS ephemeris) */
+function decodeEph1020(payload, now) {
+  const br = new BitReader(payload);
+  br.skip(12);
+  const prn = br.readUnsigned(6);
+  br.skip(5 + 2 + 2); /* frq, almanac health avail, P1 */
+  br.skip(5 + 6 + 1); /* tk: hours, minutes, 30s flag */
+  const svh = br.readUnsigned(1); /* bn: satellite health (1 = unhealthy) */
+  br.skip(1); /* reserved */
+  const tb = br.readUnsigned(7);
+
+  return { sys: 'GLONASS', prn, svh, toe: toeFromGlonassTb(tb, now) };
+}
+
 /* MSM (Multiple Signal Message) signal mask bit -> RTCM/RINEX signal code,
    indexed by signal ID 1-32 (array index = ID-1); "" means undefined/reserved.
    Source: RTCM 10403.3 MSM signal ID tables (ref tables 3.5-91/96/99/102/105/108/108.3),
@@ -401,6 +563,21 @@ function describeFrameDetail(msgType, frame, payloadLen) {
     if (msgType === 1033) {
       const d = decodeMsg1033(payload);
       return `staid=${d.staid} ant="${d.antDescriptor}"(${d.antSetupId}) sn="${d.antSerial}" rx="${d.recType}" fw="${d.recFirmware}" rxsn="${d.recSerial}"`;
+    }
+    if (msgType === 1019 || msgType === 1020 || msgType === 1042 || msgType === 1044 || msgType === 1045 || msgType === 1046) {
+      const now = new Date();
+      let e;
+      switch (msgType) {
+        case 1019: e = decodeEph1019(payload, now); break;
+        case 1020: e = decodeEph1020(payload, now); break;
+        case 1042: e = decodeEph1042(payload); break;
+        case 1044: e = decodeEph1044(payload, now); break;
+        case 1045: e = decodeEphGalileo(payload, false, now); break;
+        case 1046: e = decodeEphGalileo(payload, true, now); break;
+      }
+      const ageSec = (now.getTime() - e.toe.getTime()) / 1000;
+      const svhStr = e.svh.toString(16).padStart(2, '0');
+      return `sys=${e.sys} prn=${e.prn} toe=${e.toe.toISOString()} svh=0x${svhStr} age=${ageSec >= 0 ? '+' : ''}${ageSec.toFixed(0)}s`;
     }
     const sys = getMsmSystem(msgType);
     if (sys) {
