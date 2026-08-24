@@ -9,8 +9,10 @@ This repo is organized as a collection of independent projects, one per platform
 - [`node/`](./node) — Dependency-free Node.js Ntrip client (Windows/macOS/Linux): connects to a
   caster, uploads GGA, decodes and logs RTCM corrections in real time. Also includes a
   source-table lookup tool.
-- [`android/`](./android) — Android app connecting to an Ntrip caster and a BLE RTK receiver
-  (in development — see its readme for the planned feature set).
+- [`android/`](./android) — Android app: connects to an Ntrip caster (GGA upload, RTCM receive),
+  decodes RTCM in real time, and bridges corrections to a BLE RTK receiver over Nordic UART
+  Service. Early stage — see `android/readme.md` for the full planned feature set and
+  `android/CLAUDE.md` for what's actually implemented vs. planned.
 
 Each project folder has its own README with setup/usage instructions, and its own CLAUDE.md with
 architecture notes for anyone (human or Claude Code) working on that project's code.

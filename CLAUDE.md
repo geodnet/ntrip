@@ -10,9 +10,11 @@ subproject per top-level folder rather than a single unified codebase:
 
 - `node/` — dependency-free Node.js Ntrip client + source-table tool, cross-platform
   (Windows/macOS/Linux). See `node/CLAUDE.md` for its architecture.
-- `android/` — Android app connecting to an Ntrip caster and a BLE RTK receiver. Early stage: only
-  the project scaffold + basic caster connection are implemented so far. See `android/readme.md`
-  for the full planned feature set and `android/CLAUDE.md` for what's actually built.
+- `android/` — Android app: Ntrip caster connection, real-time RTCM decoding, and BLE RTK receiver
+  integration are implemented; offline map, mock location, TCP servers, and data logging are not
+  yet. See `android/readme.md` for the full planned feature set and `android/CLAUDE.md` for what's
+  actually built (including known gaps like BLE not surviving backgrounding and being unverified
+  against real hardware).
 
 There is no root-level build system, shared dependency graph, or cross-project code — each
 subproject is self-contained with its own README and (where non-trivial) its own CLAUDE.md.

@@ -2,9 +2,10 @@ Build an advanced, high-precision Android application designed for GNSS surveyin
 
 ## Implementation status
 
-This is the product spec / feature vision. Actual implementation is early-stage: only the project
-scaffold and a basic Ntrip caster connection (connect, upload GGA, receive/count RTCM bytes) exist
-so far.
+This is the product spec / feature vision. Actual implementation is early-stage: Ntrip caster
+connection (connect, upload GGA, receive RTCM), real-time RTCM 3.x decoding, and BLE RTK receiver
+integration (Nordic UART Service scan/connect, NMEA parsing, RTCM forwarding) are implemented.
+Offline map, mock location provider, TCP servers, and the data logger are not yet.
 
 - Building: `cd android && JAVA_HOME="<path to a JDK>" ./gradlew assembleDebug` (needs
   `local.properties`, not committed, with `sdk.dir` pointing at your Android SDK). Targets
