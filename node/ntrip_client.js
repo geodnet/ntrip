@@ -158,8 +158,8 @@ function generateGGA(latitude, longitude, altitude, numSatellites, hdop, age, st
     const latDD = Math.floor(latitude);
     const lonDD = Math.floor(longitude);
 
-    const latMM = (latitude-latDD)*100.0;
-    const lonMM = (longitude-lonDD)*100.0;
+    const latMM = (latitude-latDD)*60.0;
+    const lonMM = (longitude-lonDD)*60.0;
 
     const latDDstr = String(latDD).padStart(2,'0');
     const lonDDstr = String(lonDD).padStart(3,'0');
