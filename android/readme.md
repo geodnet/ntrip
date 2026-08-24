@@ -1,5 +1,17 @@
 Build an advanced, high-precision Android application designed for GNSS surveying, agricultural guidance, GIS mapping, and RTK navigation. It connects Android devices to external high-precision BLE RTK receivers, streams differential corrections from NTRIP Casters (such as GEODNET), injects mock location fixes into the Android operating system, forwards NMEA streams to GIS software like SW Maps over local TCP sockets, and logs raw binary & GNSS observations for post-processing (PPK).
 
+## Implementation status
+
+This is the product spec / feature vision. Actual implementation is early-stage: only the project
+scaffold and a basic Ntrip caster connection (connect, upload GGA, receive/count RTCM bytes) exist
+so far.
+
+- Building: `cd android && JAVA_HOME="<path to a JDK>" ./gradlew assembleDebug` (needs
+  `local.properties`, not committed, with `sdk.dir` pointing at your Android SDK). Targets
+  `compileSdk`/`targetSdk` 36, `minSdk` 26.
+- See [`CLAUDE.md`](./CLAUDE.md) for what's actually implemented vs. planned, and architecture
+  notes for what's built so far.
+
 ---
 
 ## ?? Key Features

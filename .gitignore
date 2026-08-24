@@ -1,2 +1,13 @@
 node/data/
 *.log
+
+# Android
+android/local.properties
+android/.gradle/
+android/build/
+android/app/build/
+android/.idea/
+android/*.iml
+android/app/*.iml
+android/captures/
+android/.cxx/

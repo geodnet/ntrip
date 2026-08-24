@@ -1,0 +1,120 @@
+package com.geodnet.ntrip.ntrip
+
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.IOException
+import java.net.InetSocketAddress
+import java.net.Socket
+import java.util.Base64
+
+/**
+ * Ntrip caster connection: opens a TCP socket, sends the Ntrip GET request with Basic Auth,
+ * uploads a GGA position fix on an interval, and tracks bytes received. Mirrors
+ * node/ntrip_client.js's connection flow. RTCM decoding is intentionally out of scope for this
+ * first milestone -- see node/CLAUDE.md for the reference decoder to port over later.
+ */
+class NtripClient(private val config: NtripConfig) {
+
+    private val _state = MutableStateFlow(NtripState())
+    val state: StateFlow<NtripState> = _state.asStateFlow()
+
+    private var socket: Socket? = null
+
+    /** Connects and runs until cancelled or the connection drops; suspends for its duration. */
+    suspend fun run() = coroutineScope {
+        _state.value = NtripState(status = NtripStatus.CONNECTING)
+        try {
+            withContext(Dispatchers.IO) {
+                socket = Socket().apply {
+                    connect(InetSocketAddress(config.host, config.port), CONNECT_TIMEOUT_MS)
+                }
+                sendRequest()
+            }
+
+            _state.update { it.copy(status = NtripStatus.CONNECTED) }
+
+            val ggaJob = if (config.ggaIntervalMs > 0) launch { ggaUploadLoop() } else null
+            try {
+                readLoop()
+            } finally {
+                ggaJob?.cancel()
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: IOException) {
+            _state.update { it.copy(status = NtripStatus.ERROR, errorMessage = e.message) }
+        } finally {
+            closeSocket()
+            _state.update {
+                if (it.status == NtripStatus.ERROR) it else it.copy(status = NtripStatus.DISCONNECTED)
+            }
+        }
+    }
+
+    /** Closes the socket, interrupting [run] if it's suspended in a blocking read/write. */
+    fun stop() {
+        closeSocket()
+    }
+
+    private fun closeSocket() {
+        try {
+            socket?.close()
+        } catch (_: IOException) {
+            // already closed / never opened
+        }
+        socket = null
+    }
+
+    private fun sendRequest() {
+        val credentials = "${config.username}:${config.password}"
+        val auth = Base64.getEncoder().encodeToString(credentials.toByteArray(Charsets.UTF_8))
+        val request = "GET /${config.mountpoint} HTTP/1.0\r\n" +
+            "User-Agent: $USER_AGENT\r\n" +
+            "Authorization: Basic $auth\r\n\r\n"
+        socket?.getOutputStream()?.apply {
+            write(request.toByteArray(Charsets.US_ASCII))
+            flush()
+        }
+    }
+
+    private suspend fun ggaUploadLoop() {
+        while (true) {
+            delay(config.ggaIntervalMs)
+            val sentence = GgaGenerator.generate(config) + "\r\n"
+            withContext(Dispatchers.IO) {
+                try {
+                    socket?.getOutputStream()?.apply {
+                        write(sentence.toByteArray(Charsets.US_ASCII))
+                        flush()
+                    }
+                } catch (_: IOException) {
+                    // let readLoop observe the same failure and report it
+                }
+            }
+        }
+    }
+
+    private suspend fun readLoop() = withContext(Dispatchers.IO) {
+        val input = socket?.getInputStream() ?: return@withContext
+        val buffer = ByteArray(4096)
+        while (isActive) {
+            val n = input.read(buffer)
+            if (n < 0) break
+            _state.update { it.copy(bytesReceived = it.bytesReceived + n) }
+        }
+    }
+
+    companion object {
+        private const val USER_AGENT = "ntrip client Android/0.1.0"
+        private const val CONNECT_TIMEOUT_MS = 10_000
+    }
+}
