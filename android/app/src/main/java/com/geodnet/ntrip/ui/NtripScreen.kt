@@ -1,5 +1,6 @@
 package com.geodnet.ntrip.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -32,6 +33,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import com.geodnet.ntrip.ble.BleDeviceInfo
+import com.geodnet.ntrip.ble.BleStatus
 import com.geodnet.ntrip.ntrip.NtripConfig
 import com.geodnet.ntrip.ntrip.NtripStatus
 import com.geodnet.ntrip.rtcm.RtcmMessage
@@ -44,6 +47,9 @@ fun NtripScreen(viewModel: NtripViewModel) {
     val connectionState by viewModel.connectionState.collectAsState()
     val rtcmStats by viewModel.rtcmStats.collectAsState()
     val rtcmLog by viewModel.rtcmLog.collectAsState()
+    val bleDevices by viewModel.bleDevices.collectAsState()
+    val bleIsScanning by viewModel.bleIsScanning.collectAsState()
+    val bleState by viewModel.bleConnectionState.collectAsState()
 
     var host by remember(config.host) { mutableStateOf(config.host) }
     var port by remember(config.port) { mutableStateOf(config.port.toString()) }
@@ -156,6 +162,41 @@ fun NtripScreen(viewModel: NtripViewModel) {
 
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("BLE RTK Receiver", style = MaterialTheme.typography.titleMedium)
+                    val bleConnected = bleState.status == BleStatus.CONNECTED
+                    if (bleConnected) {
+                        Text("Connected: ${bleState.deviceName ?: bleState.deviceAddress}")
+                        Text("From receiver: ${bleState.bytesFromReceiver}B   To receiver: ${bleState.bytesToReceiver}B")
+                        bleState.latestFix?.let { fix ->
+                            Text("Fix: quality=${fix.fixQuality} sats=${fix.numSatellites} hdop=${fix.hdop} alt=${fix.altitudeM}m")
+                        }
+                        bleState.latestGst?.let { gst ->
+                            Text("Std dev: lat=%.3fm lon=%.3fm alt=%.3fm".format(gst.latStdDevM, gst.lonStdDevM, gst.altStdDevM))
+                        }
+                        Button(onClick = { viewModel.disconnectBleDevice() }, modifier = Modifier.fillMaxWidth()) {
+                            Text("Disconnect receiver")
+                        }
+                    } else {
+                        bleState.errorMessage?.let { Text("Error: $it") }
+                        Button(
+                            onClick = {
+                                if (bleIsScanning) viewModel.stopBleScan() else viewModel.startBleScan()
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(if (bleIsScanning) "Stop scanning" else "Scan for devices")
+                        }
+                        LazyColumn(modifier = Modifier.fillMaxWidth().height(160.dp)) {
+                            items(bleDevices) { device ->
+                                BleDeviceRow(device) { viewModel.connectBleDevice(device.address) }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("RTCM Inspector", style = MaterialTheme.typography.titleMedium)
                     Text("Bytes received: ${rtcmStats.bytesReceived}  (CRC fail: ${rtcmStats.bytesCrcFail})")
                     Text("Messages decoded: ${rtcmStats.msgsDecoded}  (CRC fail: ${rtcmStats.msgsCrcFail})")
@@ -183,6 +224,18 @@ fun NtripScreen(viewModel: NtripViewModel) {
             }
         }
     }
+}
+
+@Composable
+private fun BleDeviceRow(device: BleDeviceInfo, onClick: () -> Unit) {
+    Text(
+        text = "${device.name ?: "(unknown)"}  ${device.address}  ${device.rssi}dBm",
+        style = MaterialTheme.typography.bodyMedium,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp)
+            .clickable(onClick = onClick),
+    )
 }
 
 @Composable

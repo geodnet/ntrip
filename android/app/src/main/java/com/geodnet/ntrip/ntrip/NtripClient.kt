@@ -5,11 +5,14 @@ import com.geodnet.ntrip.rtcm.RtcmMessage
 import com.geodnet.ntrip.rtcm.RtcmStats
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -33,6 +36,15 @@ class NtripClient(private val config: NtripConfig) {
     private val rtcmParser = RtcmFrameParser { Triple(config.latitude, config.longitude, config.altitude) }
     val rtcmStats: StateFlow<RtcmStats> = rtcmParser.stats
     val rtcmMessages: SharedFlow<RtcmMessage> = rtcmParser.messages
+
+    /** Raw bytes as received from the caster, for forwarding to a BLE RTK receiver -- separate
+     * from [rtcmMessages], which carries decoded/summarized messages, not the original bytes. */
+    private val _rawBytes = MutableSharedFlow<ByteArray>(
+        replay = 0,
+        extraBufferCapacity = 16,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    val rawBytes: SharedFlow<ByteArray> = _rawBytes.asSharedFlow()
 
     private var socket: Socket? = null
 
@@ -119,6 +131,7 @@ class NtripClient(private val config: NtripConfig) {
             if (n < 0) break
             _state.update { it.copy(bytesReceived = it.bytesReceived + n) }
             rtcmParser.feed(buffer, n)
+            _rawBytes.tryEmit(buffer.copyOf(n))
         }
     }
 

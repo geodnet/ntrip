@@ -55,6 +55,14 @@ class NtripForegroundService : Service() {
     )
     val rtcmMessages: SharedFlow<RtcmMessage> = _rtcmMessages.asSharedFlow()
 
+    /** Raw correction bytes, for forwarding to a BLE RTK receiver (see NtripViewModel). */
+    private val _rawBytes = MutableSharedFlow<ByteArray>(
+        replay = 0,
+        extraBufferCapacity = 16,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    val rawBytes: SharedFlow<ByteArray> = _rawBytes.asSharedFlow()
+
     inner class LocalBinder : Binder() {
         fun getService(): NtripForegroundService = this@NtripForegroundService
     }
@@ -85,6 +93,7 @@ class NtripForegroundService : Service() {
             }
             launch { newClient.rtcmStats.collect { _rtcmStats.value = it } }
             launch { newClient.rtcmMessages.collect { _rtcmMessages.emit(it) } }
+            launch { newClient.rawBytes.collect { _rawBytes.emit(it) } }
         }
         runJob = serviceScope.launch { newClient.run() }
     }

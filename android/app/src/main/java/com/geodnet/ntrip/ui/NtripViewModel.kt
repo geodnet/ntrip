@@ -9,6 +9,10 @@ import android.os.IBinder
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.geodnet.ntrip.ble.BleConnectionState
+import com.geodnet.ntrip.ble.BleDeviceInfo
+import com.geodnet.ntrip.ble.BleRtkReceiver
+import com.geodnet.ntrip.ble.BleScanner
 import com.geodnet.ntrip.data.SettingsRepository
 import com.geodnet.ntrip.ntrip.NtripConfig
 import com.geodnet.ntrip.ntrip.NtripState
@@ -41,6 +45,12 @@ class NtripViewModel(app: Application) : AndroidViewModel(app) {
     private val _rtcmLog = MutableStateFlow<List<RtcmMessage>>(emptyList())
     val rtcmLog: StateFlow<List<RtcmMessage>> = _rtcmLog.asStateFlow()
 
+    private val bleScanner = BleScanner(app)
+    private val bleReceiver = BleRtkReceiver(app)
+    val bleDevices: StateFlow<List<BleDeviceInfo>> = bleScanner.devices
+    val bleIsScanning: StateFlow<Boolean> = bleScanner.isScanning
+    val bleConnectionState: StateFlow<BleConnectionState> = bleReceiver.state
+
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             val boundService = (binder as NtripForegroundService.LocalBinder).getService()
@@ -56,6 +66,11 @@ class NtripViewModel(app: Application) : AndroidViewModel(app) {
                 boundService.rtcmMessages.collect { message ->
                     _rtcmLog.update { (listOf(message) + it).take(RTCM_LOG_LIMIT) }
                 }
+            }
+            // Forward every correction chunk from the caster to the BLE receiver, if connected.
+            // sendRtcm() no-ops when there's no connected device, so this is safe to always run.
+            viewModelScope.launch {
+                boundService.rawBytes.collect { bytes -> bleReceiver.sendRtcm(bytes) }
             }
             pendingStart?.let {
                 boundService.start(it)
@@ -103,7 +118,23 @@ class NtripViewModel(app: Application) : AndroidViewModel(app) {
         service?.stopConnection()
     }
 
+    fun isBluetoothEnabled(): Boolean = bleScanner.isBluetoothEnabled()
+
+    fun startBleScan() = bleScanner.startScan()
+
+    fun stopBleScan() = bleScanner.stopScan()
+
+    fun connectBleDevice(address: String) {
+        stopBleScan()
+        val device = bleScanner.getDevice(address) ?: return
+        bleReceiver.connect(device)
+    }
+
+    fun disconnectBleDevice() = bleReceiver.disconnect()
+
     override fun onCleared() {
+        bleScanner.stopScan()
+        bleReceiver.disconnect()
         if (bound) {
             getApplication<Application>().unbindService(connection)
             bound = false

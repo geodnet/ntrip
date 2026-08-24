@@ -7,11 +7,17 @@ what's actually implemented so far, not the plan.
 
 ## Status
 
-Ntrip caster connection (connect, upload GGA, receive RTCM) plus a real-time RTCM 3.x inspector
-(message decoding, live log, per-type counts). None of the other features from `readme.md` (BLE
-receiver, offline map, mock location, TCP servers, dual logger) are implemented yet — build those
-as separate follow-on work, each probably warranting its own package under `ntrip/`-style siblings
-(e.g. `ble/`, `map/`, `logging/`).
+Ntrip caster connection (connect, upload GGA, receive RTCM), a real-time RTCM 3.x inspector
+(message decoding, live log, per-type counts), and BLE RTK receiver integration (scan/connect over
+Nordic UART Service, NMEA parsing, RTCM forwarding to the receiver). None of the other features
+from `readme.md` (offline map, mock location, TCP servers, dual logger) are implemented yet — build
+those as separate follow-on work, each probably warranting its own package under `ntrip/`-style
+siblings (e.g. `map/`, `logging/`).
+
+**The BLE code has not been verified against real hardware in this environment** — it compiles
+cleanly against the real Android BLE APIs and the NMEA parsing has real unit tests, but the GATT
+connection lifecycle (connect/discover/notify/write) needs a real receiver for a first smoke test
+before you trust it end-to-end.
 
 ## Stack
 
@@ -91,16 +97,48 @@ have `sdk.dir` pointing at your Android SDK.
   **The password is stored in plaintext.** That's an explicit known gap, not an oversight — move
   to `EncryptedSharedPreferences` or Keystore-backed storage before this handles real credentials
   day-to-day.
-- `MainActivity.kt` — single Compose entry point; requests `POST_NOTIFICATIONS` at runtime on
-  API 33+ (required for the foreground-service notification to actually show).
+- `ble/` — BLE RTK receiver integration via Nordic UART Service (NUS), the de facto standard most
+  such receivers use for a serial-over-BLE bridge.
+  - `NmeaSentence` / `NmeaParser` — sealed-class result + parser for `$--GGA`/`$--RMC`/`$--GST`
+    (talker ID ignored, so `$GNGGA`/`$GPGGA`/etc. all match). Validates the checksum when present;
+    a sentence with a bad checksum or unrecognized type returns `null` rather than throwing. Has
+    real unit tests (`NmeaParserTest`) with checksums computed independently, not just
+    self-consistency checks.
+  - `BleUuids` — the standard NUS service/characteristic UUIDs. If a receiver doesn't respond,
+    check it's actually NUS-based before assuming a bug here — not every BLE GNSS receiver uses it.
+  - `BleScanner` — wraps `BluetoothLeScanner`; doesn't filter by service UUID since not every
+    receiver advertises it, so the user picks by name/address from an unfiltered list.
+  - `BleRtkReceiver` — the GATT client: connects, negotiates MTU, enables notifications on the TX
+    characteristic, parses incoming lines through `NmeaParser`, and chunks outgoing RTCM writes to
+    fit the negotiated MTU (`WRITE_TYPE_NO_RESPONSE`, queued so a slow peripheral doesn't drop
+    writes). Handles both the pre- and post-API-33 `BluetoothGatt` callback/write signatures.
+    **Not yet verified against real hardware** — see Status above.
+  - All BLE calls assume the caller already holds `BLUETOOTH_SCAN`/`BLUETOOTH_CONNECT` (API 31+)
+    or `ACCESS_FINE_LOCATION` (below that); `MainActivity` requests these at startup, but neither
+    it nor `ble/` re-checks before calling — a scan/connect attempt without the permission granted
+    will just silently no-op or throw, which is a gap worth tightening once there's a real device
+    to test the failure path against.
+  - RTCM bridging: `NtripViewModel` subscribes to the service's `rawBytes` (raw caster bytes, not
+    the decoded `RtcmMessage`s) and forwards every chunk to `BleRtkReceiver.sendRtcm()`, which
+    no-ops if nothing's connected. This bridge runs in the ViewModel, not the foreground service —
+    unlike the Ntrip connection, the BLE connection does **not** currently survive the app being
+    backgrounded. Moving `BleRtkReceiver` into (or alongside) `NtripForegroundService` — with a
+    `connectedDevice` foreground service type added — is the natural next step if background BLE
+    operation matters.
+- `MainActivity.kt` — single Compose entry point; requests `POST_NOTIFICATIONS` (API 33+) and the
+  BLE scan/connect permissions (`BLUETOOTH_SCAN`+`BLUETOOTH_CONNECT` on API 31+, else
+  `ACCESS_FINE_LOCATION`) at startup via one multi-permission launcher.
 
 ## Known gaps / next steps
 
-- No BLE integration, map, mock location provider, TCP servers, or data logger yet — see
-  `readme.md` for what those should eventually do.
+- No offline map, mock location provider, TCP servers, or data logger yet — see `readme.md` for
+  what those should eventually do.
+- BLE connection is Activity/ViewModel-scoped, not hosted in the foreground service — it won't
+  survive backgrounding the way the Ntrip connection does (see `ble/` above).
+- BLE hasn't been smoke-tested against a real receiver in this environment.
 - RTCM stats are cumulative since connect, not reset periodically like the Node client's 60s
   report; the live log caps at 200 entries (oldest dropped).
-- Only unit tests (`rtcm/` decoders) exist — no UI/instrumented tests.
+- Only unit tests (`rtcm/` decoders, `ble/NmeaParser`) exist — no UI/instrumented tests.
 - App icon uses the system default (`@android:drawable/sym_def_app_icon`) rather than a real
   launcher icon/adaptive icon set.
 - Password storage is plaintext (see above).
