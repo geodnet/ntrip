@@ -13,13 +13,19 @@ import com.geodnet.ntrip.ntrip.NtripClient
 import com.geodnet.ntrip.ntrip.NtripConfig
 import com.geodnet.ntrip.ntrip.NtripState
 import com.geodnet.ntrip.ntrip.NtripStatus
+import com.geodnet.ntrip.rtcm.RtcmMessage
+import com.geodnet.ntrip.rtcm.RtcmStats
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
@@ -39,6 +45,16 @@ class NtripForegroundService : Service() {
     private val _serviceState = MutableStateFlow(NtripState())
     val serviceState: StateFlow<NtripState> = _serviceState.asStateFlow()
 
+    private val _rtcmStats = MutableStateFlow(RtcmStats())
+    val rtcmStats: StateFlow<RtcmStats> = _rtcmStats.asStateFlow()
+
+    private val _rtcmMessages = MutableSharedFlow<RtcmMessage>(
+        replay = 0,
+        extraBufferCapacity = 64,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    val rtcmMessages: SharedFlow<RtcmMessage> = _rtcmMessages.asSharedFlow()
+
     inner class LocalBinder : Binder() {
         fun getService(): NtripForegroundService = this@NtripForegroundService
     }
@@ -56,14 +72,19 @@ class NtripForegroundService : Service() {
         val newClient = NtripClient(config)
         client = newClient
         _serviceState.value = NtripState(status = NtripStatus.CONNECTING)
+        _rtcmStats.value = RtcmStats()
 
         startForeground(NOTIFICATION_ID, buildNotification(_serviceState.value))
 
         observeJob = serviceScope.launch {
-            newClient.state.collect { state ->
-                _serviceState.value = state
-                updateNotification(state)
+            launch {
+                newClient.state.collect { state ->
+                    _serviceState.value = state
+                    updateNotification(state)
+                }
             }
+            launch { newClient.rtcmStats.collect { _rtcmStats.value = it } }
+            launch { newClient.rtcmMessages.collect { _rtcmMessages.emit(it) } }
         }
         runJob = serviceScope.launch { newClient.run() }
     }

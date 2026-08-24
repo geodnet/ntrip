@@ -12,10 +12,13 @@ import androidx.lifecycle.viewModelScope
 import com.geodnet.ntrip.data.SettingsRepository
 import com.geodnet.ntrip.ntrip.NtripConfig
 import com.geodnet.ntrip.ntrip.NtripState
+import com.geodnet.ntrip.rtcm.RtcmMessage
+import com.geodnet.ntrip.rtcm.RtcmStats
 import com.geodnet.ntrip.service.NtripForegroundService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 class NtripViewModel(app: Application) : AndroidViewModel(app) {
@@ -32,6 +35,12 @@ class NtripViewModel(app: Application) : AndroidViewModel(app) {
     private val _connectionState = MutableStateFlow(NtripState())
     val connectionState: StateFlow<NtripState> = _connectionState.asStateFlow()
 
+    private val _rtcmStats = MutableStateFlow(RtcmStats())
+    val rtcmStats: StateFlow<RtcmStats> = _rtcmStats.asStateFlow()
+
+    private val _rtcmLog = MutableStateFlow<List<RtcmMessage>>(emptyList())
+    val rtcmLog: StateFlow<List<RtcmMessage>> = _rtcmLog.asStateFlow()
+
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             val boundService = (binder as NtripForegroundService.LocalBinder).getService()
@@ -39,6 +48,14 @@ class NtripViewModel(app: Application) : AndroidViewModel(app) {
             bound = true
             viewModelScope.launch {
                 boundService.serviceState.collect { _connectionState.value = it }
+            }
+            viewModelScope.launch {
+                boundService.rtcmStats.collect { _rtcmStats.value = it }
+            }
+            viewModelScope.launch {
+                boundService.rtcmMessages.collect { message ->
+                    _rtcmLog.update { (listOf(message) + it).take(RTCM_LOG_LIMIT) }
+                }
             }
             pendingStart?.let {
                 boundService.start(it)
@@ -70,6 +87,8 @@ class NtripViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun connect() {
+        _rtcmStats.value = RtcmStats()
+        _rtcmLog.value = emptyList()
         val context = getApplication<Application>()
         ContextCompat.startForegroundService(context, Intent(context, NtripForegroundService::class.java))
         val current = service
@@ -90,5 +109,9 @@ class NtripViewModel(app: Application) : AndroidViewModel(app) {
             bound = false
         }
         super.onCleared()
+    }
+
+    companion object {
+        private const val RTCM_LOG_LIMIT = 200
     }
 }

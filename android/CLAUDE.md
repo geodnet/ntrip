@@ -7,11 +7,11 @@ what's actually implemented so far, not the plan.
 
 ## Status
 
-Initial milestone only: project scaffold + a working Ntrip caster connection (connect, upload GGA,
-receive/count RTCM bytes). None of the other features from `readme.md` (BLE receiver, RTCM
-decoding/inspector, offline map, mock location, TCP servers, dual logger) are implemented yet —
-build those as separate follow-on work, each probably warranting its own package under
-`ntrip/`-style siblings (e.g. `ble/`, `map/`, `logging/`).
+Ntrip caster connection (connect, upload GGA, receive RTCM) plus a real-time RTCM 3.x inspector
+(message decoding, live log, per-type counts). None of the other features from `readme.md` (BLE
+receiver, offline map, mock location, TCP servers, dual logger) are implemented yet — build those
+as separate follow-on work, each probably warranting its own package under `ntrip/`-style siblings
+(e.g. `ble/`, `map/`, `logging/`).
 
 ## Stack
 
@@ -52,17 +52,41 @@ have `sdk.dir` pointing at your Android SDK.
   reintroduce that mistake here.
 - `ntrip/NtripClient.kt` — the actual caster connection: opens a `java.net.Socket`, sends the
   Ntrip `GET` request with Basic Auth, runs a GGA-upload coroutine on `config.ggaIntervalMs`
-  (skipped entirely if `<= 0`), and a read loop that currently just counts bytes into a
-  `StateFlow<NtripState>`. RTCM decoding is **not** wired in yet — when it is, port the decoder
-  logic from `node/ntrip_client.js` (RTCM3 framing/CRC-24Q/message decode) rather than
-  reimplementing it from scratch; that Node code was carefully cross-checked against RTKLIB.
+  (skipped entirely if `<= 0`), and a read loop that feeds every chunk into an `RtcmFrameParser`
+  and tracks bytes into a `StateFlow<NtripState>`.
+- `rtcm/` — RTCM3 decoding, ported from `node/ntrip_client.js` rather than reimplemented from
+  scratch (that Node code was carefully cross-checked against RTKLIB's `rtcm3.c`; if a bit layout
+  here looks wrong, check the Node version and `node/CLAUDE.md` first).
+  - `RtcmBitReader` / `Crc24Q` — MSB-first bit field extraction and CRC-24Q, mirroring the Node
+    `BitReader`/`crc24q()`. Uses `Long` (not `Int`) for bit values since some fields (38-bit ECEF
+    coordinates) exceed 32 bits.
+  - `RtcmFrameParser` — buffers incoming bytes, finds `0xD3` sync, reassembles frames split across
+    TCP chunks, verifies CRC, and decodes 1005/1006/1033/ephemeris/MSM into a one-line `summary`
+    string (mirrors `describeFrameDetail()`). Exposes `stats: StateFlow<RtcmStats>` (cumulative
+    since `reset()`, not time-windowed like the Node client's 60s report) and
+    `messages: SharedFlow<RtcmMessage>` (replay=0 — a collector only sees messages emitted *after*
+    it subscribes; see the test helper `collectN` in `RtcmFrameParserTest` for how to test this
+    correctly, since a naive "feed then collect" test hangs).
+  - `StationDecoders`, `MsmHeaderDecoder`, `EphemerisDecoders`, `EphemerisTime`, `GeoMath`,
+    `MsmSignalTables`, `RtcmMessageDescriptions` — direct ports of the equivalently-named Node
+    functions/tables. `RtcmMessageDescriptions`'s IGS SSR strings intentionally say "SSR" twice
+    (e.g. "IGS SSR GPS SSR Orbit Correction") — that's inherited verbatim from the Node client, not
+    a typo to fix here.
+  - Unit tests in `app/src/test/java/.../rtcm/` build synthetic frames with a `TestBitWriter` and
+    check decoded output against independently-computed expected values (not just "it doesn't
+    crash") — run with `./gradlew testDebugUnitTest`. These are plain JVM tests, no
+    emulator/device needed.
 - `service/NtripForegroundService.kt` — hosts the `NtripClient` so the connection survives the app
   being backgrounded (a hard Android platform requirement for background networking, not
   optional). Declared with `foregroundServiceType="dataSync"` in the manifest (required on
-  API 34+). The UI binds to this service rather than owning the client directly.
-- `ui/NtripViewModel.kt` — binds to the service, exposes `config`/`connectionState` as
-  `StateFlow`s, and persists config changes via `SettingsRepository`. Handles the async-bind race
-  (connect() called before the service binding completes) with a `pendingStart` field.
+  API 34+). The UI binds to this service rather than owning the client directly, and the service
+  re-exposes the client's `rtcmStats`/`rtcmMessages` alongside `serviceState` so they survive the
+  client being recreated on each `start()`.
+- `ui/NtripViewModel.kt` — binds to the service, exposes `config`/`connectionState`/`rtcmStats` as
+  `StateFlow`s and `rtcmLog` as a capped (200-entry) `StateFlow<List<RtcmMessage>>` built by
+  collecting the service's `SharedFlow`, and persists config changes via `SettingsRepository`.
+  Handles the async-bind race (connect() called before the service binding completes) with a
+  `pendingStart` field.
 - `data/SettingsRepository.kt` — Preferences DataStore-backed persistence for `NtripConfig`.
   **The password is stored in plaintext.** That's an explicit known gap, not an oversight — move
   to `EncryptedSharedPreferences` or Keystore-backed storage before this handles real credentials
@@ -72,9 +96,11 @@ have `sdk.dir` pointing at your Android SDK.
 
 ## Known gaps / next steps
 
-- No RTCM decoding, BLE integration, map, mock location provider, TCP servers, or data logger yet
-  — see `readme.md` for what those should eventually do.
-- No tests.
+- No BLE integration, map, mock location provider, TCP servers, or data logger yet — see
+  `readme.md` for what those should eventually do.
+- RTCM stats are cumulative since connect, not reset periodically like the Node client's 60s
+  report; the live log caps at 200 entries (oldest dropped).
+- Only unit tests (`rtcm/` decoders) exist — no UI/instrumented tests.
 - App icon uses the system default (`@android:drawable/sym_def_app_icon`) rather than a real
   launcher icon/adaptive icon set.
 - Password storage is plaintext (see above).

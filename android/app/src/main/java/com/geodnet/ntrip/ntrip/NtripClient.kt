@@ -1,10 +1,14 @@
 package com.geodnet.ntrip.ntrip
 
+import com.geodnet.ntrip.rtcm.RtcmFrameParser
+import com.geodnet.ntrip.rtcm.RtcmMessage
+import com.geodnet.ntrip.rtcm.RtcmStats
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -18,20 +22,24 @@ import java.util.Base64
 
 /**
  * Ntrip caster connection: opens a TCP socket, sends the Ntrip GET request with Basic Auth,
- * uploads a GGA position fix on an interval, and tracks bytes received. Mirrors
- * node/ntrip_client.js's connection flow. RTCM decoding is intentionally out of scope for this
- * first milestone -- see node/CLAUDE.md for the reference decoder to port over later.
+ * uploads a GGA position fix on an interval, and decodes incoming RTCM3 frames via
+ * [RtcmFrameParser]. Mirrors node/ntrip_client.js's connection flow.
  */
 class NtripClient(private val config: NtripConfig) {
 
     private val _state = MutableStateFlow(NtripState())
     val state: StateFlow<NtripState> = _state.asStateFlow()
 
+    private val rtcmParser = RtcmFrameParser { Triple(config.latitude, config.longitude, config.altitude) }
+    val rtcmStats: StateFlow<RtcmStats> = rtcmParser.stats
+    val rtcmMessages: SharedFlow<RtcmMessage> = rtcmParser.messages
+
     private var socket: Socket? = null
 
     /** Connects and runs until cancelled or the connection drops; suspends for its duration. */
     suspend fun run() = coroutineScope {
         _state.value = NtripState(status = NtripStatus.CONNECTING)
+        rtcmParser.reset()
         try {
             withContext(Dispatchers.IO) {
                 socket = Socket().apply {
@@ -110,6 +118,7 @@ class NtripClient(private val config: NtripConfig) {
             val n = input.read(buffer)
             if (n < 0) break
             _state.update { it.copy(bytesReceived = it.bytesReceived + n) }
+            rtcmParser.feed(buffer, n)
         }
     }
 
