@@ -1,6 +1,7 @@
 package com.geodnet.ntrip.ui
 
 import android.annotation.SuppressLint
+import java.util.Locale
 import android.view.ViewGroup
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -665,8 +666,22 @@ private fun trajectoryJson(points: List<PositionFix>): String {
 private fun segmentsJson(segments: List<StaticSegment>): String {
     val arr = JSONArray()
     for (s in segments) {
-        val durationSec = ((s.endTimeMs - s.startTimeMs) / 1000).coerceAtLeast(1)
-        arr.put(JSONArray(listOf(s.meanLatDeg, s.meanLonDeg, s.epochCount, s.stdDevM, s.meanAltM, durationSec)))
+        arr.put(
+            JSONArray(
+                listOf(
+                    s.meanLatDeg,
+                    s.meanLonDeg,
+                    s.epochCount,
+                    s.stdDev2dM,
+                    s.meanAltM,
+                    s.durationSec,
+                    s.stdDevNorthM,
+                    s.stdDevEastM,
+                    s.stdDevUpM,
+                    s.stdDev3dM
+                )
+            )
+        )
     }
     return arr.toString()
 }
@@ -1041,7 +1056,6 @@ private fun StaticSegmentsDialog(
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         itemsIndexed(staticSegments) { index, seg ->
-                            val durationSec = ((seg.endTimeMs - seg.startTimeMs) / 1000).coerceAtLeast(1)
                             Card(
                                 shape = RoundedCornerShape(14.dp),
                                 colors = CardDefaults.cardColors(
@@ -1072,7 +1086,7 @@ private fun StaticSegmentsDialog(
                                             border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF7C3AED))
                                         ) {
                                             Text(
-                                                text = "σ = ±%.1f mm".format(seg.stdDevM * 1000.0),
+                                                text = "σ2D: ±%.4fm".format(Locale.US, seg.stdDev2dM),
                                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                                                 style = MaterialTheme.typography.labelSmall,
                                                 fontWeight = FontWeight.Bold,
@@ -1088,18 +1102,18 @@ private fun StaticSegmentsDialog(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Column {
-                                            Text("EPOCHS", style = MaterialTheme.typography.labelSmall, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text("DURATION", style = MaterialTheme.typography.labelSmall, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             Text(
-                                                "${seg.epochCount} (~${durationSec}s)",
+                                                "%.1fs (%d eps)".format(Locale.US, seg.durationSec, seg.epochCount),
                                                 style = MaterialTheme.typography.bodyMedium,
                                                 fontWeight = FontWeight.Bold
                                             )
                                         }
 
                                         Column {
-                                            Text("ELEVATION", style = MaterialTheme.typography.labelSmall, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text("HEIGHT (UP)", style = MaterialTheme.typography.labelSmall, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             Text(
-                                                "%.3f m".format(seg.meanAltM),
+                                                "%.4f m".format(Locale.US, seg.meanAltM),
                                                 style = MaterialTheme.typography.bodyMedium,
                                                 fontWeight = FontWeight.Bold,
                                                 color = MaterialTheme.colorScheme.primary
@@ -1107,12 +1121,45 @@ private fun StaticSegmentsDialog(
                                         }
 
                                         Column {
-                                            Text("COORDINATES", style = MaterialTheme.typography.labelSmall, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text("COORDINATES (WGS84)", style = MaterialTheme.typography.labelSmall, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             Text(
-                                                "%.7f, %.7f".format(seg.meanLatDeg, seg.meanLonDeg),
+                                                "%.9f,\n%.9f".format(Locale.US, seg.meanLatDeg, seg.meanLonDeg),
                                                 style = MaterialTheme.typography.bodySmall,
                                                 fontFamily = FontFamily.Monospace,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                fontSize = 10.sp
+                                            )
+                                        }
+                                    }
+
+                                    // NEU Precision Details
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                "σN: ±%.4fm".format(Locale.US, seg.stdDevNorthM),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.SemiBold,
+                                                fontSize = 10.sp
+                                            )
+                                            Text(
+                                                "σE: ±%.4fm".format(Locale.US, seg.stdDevEastM),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.SemiBold,
+                                                fontSize = 10.sp
+                                            )
+                                            Text(
+                                                "σU: ±%.4fm".format(Locale.US, seg.stdDevUpM),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.SemiBold,
+                                                fontSize = 10.sp
                                             )
                                         }
                                     }

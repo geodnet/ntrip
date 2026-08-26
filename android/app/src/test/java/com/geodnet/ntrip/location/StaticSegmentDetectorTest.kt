@@ -91,8 +91,8 @@ class StaticSegmentDetectorTest {
     }
 
     @Test
-    fun `non-RTK fix breaks or is excluded when rtkFixOnly is true`() {
-        val detector = StaticSegmentDetector(distanceCutoffM = 0.05, minDurationMs = 1_000, rtkFixOnly = true)
+    fun `transient non-RTK dropout is tolerated while sustained dropout finalizes cluster`() {
+        val detector = StaticSegmentDetector(distanceCutoffM = 0.05, minDurationMs = 1_000, rtkFixOnly = true, maxNonRtkDropoutEpochs = 2)
         detector.accept(base.copy(fixQuality = 4, timestampMs = 0L))
         detector.accept(base.copy(fixQuality = 4, timestampMs = 2_000L))
 
@@ -100,15 +100,53 @@ class StaticSegmentDetectorTest {
         val current = detector.currentSegment()
         assertNotNull(current)
         assertEquals(2, current!!.epochCount)
+        assertEquals(2.0, current.durationSec, 1e-6)
 
-        // Float fix arrives (RTK fix lost) -> breaks and finalizes previous RTK fixed segment
-        val finalized = detector.accept(base.copy(fixQuality = 5, timestampMs = 3_000L))
+        // 1st transient float fix -> ignored (dropout 1/2)
+        val drop1 = detector.accept(base.copy(fixQuality = 5, timestampMs = 3_000L))
+        assertNull(drop1)
+        assertNotNull(detector.currentSegment())
+
+        // 2nd transient float fix -> ignored (dropout 2/2)
+        val drop2 = detector.accept(base.copy(fixQuality = 5, timestampMs = 4_000L))
+        assertNull(drop2)
+        assertNotNull(detector.currentSegment())
+
+        // RTK fix recovers!
+        detector.accept(base.copy(fixQuality = 4, timestampMs = 5_000L))
+        assertEquals(3, detector.currentSegment()!!.epochCount)
+        assertEquals(5.0, detector.currentSegment()!!.durationSec, 1e-6)
+
+        // Sustained float dropouts (> 2 epochs) -> 1st, 2nd ignored, 3rd breaks and finalizes
+        assertNull(detector.accept(base.copy(fixQuality = 5, timestampMs = 6_000L)))
+        assertNull(detector.accept(base.copy(fixQuality = 5, timestampMs = 7_000L)))
+        val finalized = detector.accept(base.copy(fixQuality = 5, timestampMs = 8_000L))
         assertNotNull(finalized)
-        assertEquals(2, finalized!!.epochCount)
+        assertEquals(3, finalized!!.epochCount)
 
-        // Further float fixes do not start a new cluster when rtkFixOnly is true
-        detector.accept(base.copy(fixQuality = 5, timestampMs = 5_000L))
+        // Cluster is now cleared
         assertNull(detector.currentSegment())
         assertNull(detector.flush())
+    }
+
+    @Test
+    fun `calculates precise NEU standard deviations and duration`() {
+        val detector = StaticSegmentDetector(distanceCutoffM = 0.05, minDurationMs = 1_000)
+        // 3 fixes with slight North, East, and Altitude variation
+        detector.accept(fix(37.000000000, -122.000000000, 10.0000, 0L))
+        detector.accept(fix(37.000000100, -122.000000100, 10.0100, 1_000L))
+        detector.accept(fix(37.000000200, -122.000000200, 10.0200, 2_000L))
+
+        val seg = detector.flush()
+        assertNotNull(seg)
+        assertEquals(37.0000001, seg!!.meanLatDeg, 1e-9)
+        assertEquals(-122.0000001, seg.meanLonDeg, 1e-9)
+        assertEquals(10.01, seg.meanAltM, 1e-4)
+        assertEquals(2.0, seg.durationSec, 1e-3)
+        assertTrue(seg.stdDevNorthM > 0.0)
+        assertTrue(seg.stdDevEastM > 0.0)
+        assertTrue(seg.stdDevUpM > 0.0)
+        assertTrue(seg.stdDev2dM > 0.0)
+        assertTrue(seg.stdDev3dM >= seg.stdDev2dM)
     }
 }

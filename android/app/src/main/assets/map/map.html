@@ -364,17 +364,23 @@
         var lat = s[0];
         var lon = s[1];
         var epochs = s[2];
-        var stdM = s[3];
+        var std2dM = s[3];
         var altM = s.length > 4 ? s[4] : 0;
         var durSec = s.length > 5 ? s[5] : epochs;
+        var stdN = s.length > 6 ? s[6] : (std2dM / Math.SQRT2);
+        var stdE = s.length > 7 ? s[7] : (std2dM / Math.SQRT2);
+        var stdU = s.length > 8 ? s[8] : 0;
 
         var popupHtml =
-          '<div style="font-family:-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif; min-width:160px; padding:2px;">' +
-          '<div style="font-weight:700; font-size:13px; color:#7c3aed;">📍 Static Survey #' + (i + 1) + '</div>' +
-          '<div style="font-size:12px; color:#334155; margin-top:4px;">Occupied: <b>' + epochs + ' epochs</b> (~' + durSec + 's)</div>' +
-          '<div style="font-size:12px; color:#334155;">Precision: <b>±' + (stdM * 1000).toFixed(1) + ' mm</b></div>' +
-          '<div style="font-size:11px; color:#475569;">Elevation: <b>' + altM.toFixed(3) + ' m</b></div>' +
-          '<div style="font-size:10px; color:#94a3b8; font-family:monospace; margin-top:4px;">' + lat.toFixed(7) + ', ' + lon.toFixed(7) + '</div>' +
+          '<div style="font-family:-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif; min-width:180px; padding:2px;">' +
+          '<div style="font-weight:700; font-size:13px; color:#7c3aed; display:flex; justify-content:space-between;">' +
+          '<span>📍 Static Survey #' + (i + 1) + '</span>' +
+          '<span style="font-size:10px; font-weight:700; background:#7c3aed20; color:#7c3aed; border-radius:4px; padding:1px 5px;">σ2D: ±' + (std2dM * 1000).toFixed(1) + 'mm</span>' +
+          '</div>' +
+          '<div style="font-size:12px; color:#334155; margin-top:4px;">Duration: <b>' + Number(durSec).toFixed(1) + 's</b> (' + epochs + ' epochs)</div>' +
+          '<div style="font-size:12px; color:#334155;">Height (Up): <b>' + altM.toFixed(4) + ' m</b></div>' +
+          '<div style="font-size:11px; color:#475569; margin-top:2px;">σNEU: <b>N:±' + stdN.toFixed(4) + 'm, E:±' + stdE.toFixed(4) + 'm, U:±' + stdU.toFixed(4) + 'm</b></div>' +
+          '<div style="font-size:10px; color:#94a3b8; font-family:monospace; margin-top:4px;">' + lat.toFixed(9) + ', ' + lon.toFixed(9) + '</div>' +
           '</div>';
 
         L.circleMarker([lat, lon], {
@@ -385,7 +391,7 @@
           fillOpacity: 0.88
         })
         .bindPopup(popupHtml)
-        .bindTooltip('Static #' + (i + 1) + ' (±' + (stdM * 1000).toFixed(0) + 'mm)', { permanent: false, direction: 'top' })
+        .bindTooltip('Static #' + (i + 1) + ' (' + Number(durSec).toFixed(1) + 's, ±' + (std2dM * 1000).toFixed(0) + 'mm)', { permanent: false, direction: 'top' })
         .addTo(segmentLayer);
       }
     } catch (e) {

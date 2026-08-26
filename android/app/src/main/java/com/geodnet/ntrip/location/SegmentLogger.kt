@@ -57,13 +57,25 @@ class SegmentLogger(private val context: Context) {
     }
 
     private fun rowFor(segment: StaticSegment): String =
-        "${isoFormat.format(Date(segment.startTimeMs))}," +
-            "${isoFormat.format(Date(segment.endTimeMs))}," +
-            "${segment.epochCount}," +
-            "${segment.meanLatDeg},${segment.meanLonDeg},${segment.meanAltM}," +
-            "${segment.stdDevM}\n"
+        String.format(
+            Locale.US,
+            "%s,%s,%.1f,%d,%.9f,%.9f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f\n",
+            isoFormat.format(Date(segment.startTimeMs)),
+            isoFormat.format(Date(segment.endTimeMs)),
+            segment.durationSec,
+            segment.epochCount,
+            segment.meanLatDeg,
+            segment.meanLonDeg,
+            segment.meanAltM,
+            segment.stdDevNorthM,
+            segment.stdDevEastM,
+            segment.stdDevUpM,
+            segment.stdDev2dM,
+            segment.stdDev3dM
+        )
 
     companion object {
-        private const val HEADER = "start_utc,end_utc,epoch_count,mean_lat_deg,mean_lon_deg,mean_alt_m,std_dev_m\n"
+        private const val HEADER =
+            "start_utc,end_utc,duration_s,epoch_count,mean_lat_deg,mean_lon_deg,mean_height_m,std_north_m,std_east_m,std_up_m,std_2d_m,std_3d_m\n"
     }
 }
