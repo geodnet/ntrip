@@ -1,6 +1,7 @@
 package com.geodnet.ntrip.location
 
 import android.content.Context
+import com.geodnet.ntrip.logging.LogPaths
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -10,22 +11,31 @@ import java.util.Locale
 import java.util.TimeZone
 
 /**
- * Appends each finalized [StaticSegment] to a CSV file under app-private storage, so readme.md's
- * "save the auto-detected segments" means something durable rather than an in-memory list that's
- * gone the moment the app process dies. Deliberately just a flat CSV, not the structured
- * per-day/per-mountpoint folder layout readme.md describes for the (not yet built) Dual Data
- * Logger -- that's a separate, larger feature; this is the minimal "save" this one asks for.
+ * Appends each finalized [StaticSegment] to a CSV file under `logs/yyyy-MM-dd/` (GPS time),
+ * matching the folder and filename convention of [com.geodnet.ntrip.logging.RawBinaryLogger]
+ * and [com.geodnet.ntrip.logging.GnssRawLogger].
  */
-class SegmentLogger(context: Context) {
+class SegmentLogger(private val context: Context) {
 
-    private val file = File(context.getExternalFilesDir(null) ?: context.filesDir, "static_segments.csv")
+    private var currentMountpoint: String = "AUTO"
+    private var activeFile: File? = null
     private val isoFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
         timeZone = TimeZone.getTimeZone("UTC")
     }
 
+    fun setMountpoint(mountpoint: String) {
+        val sanitized = mountpoint.trim()
+        if (sanitized.isNotEmpty() && sanitized != currentMountpoint) {
+            currentMountpoint = sanitized
+            activeFile = null // Rotate file when mountpoint changes
+        }
+    }
+
+    @Synchronized
     fun append(segment: StaticSegment) {
         try {
-            val isNewFile = !file.exists()
+            val file = getOrCreateFile()
+            val isNewFile = !file.exists() || file.length() == 0L
             FileOutputStream(file, true).use { out ->
                 if (isNewFile) {
                     out.write(HEADER.toByteArray())
@@ -35,6 +45,15 @@ class SegmentLogger(context: Context) {
         } catch (_: IOException) {
             // best-effort logging -- a write failure shouldn't take down the detector/UI
         }
+    }
+
+    private fun getOrCreateFile(): File {
+        activeFile?.let { return it }
+        val dir = File(context.getExternalFilesDir(null) ?: context.filesDir, "logs/${LogPaths.dateFolder()}")
+        dir.mkdirs()
+        val file = File(dir, "${LogPaths.timestampPrefix()}-${LogPaths.sanitizeForFilename(currentMountpoint)}-static.csv")
+        activeFile = file
+        return file
     }
 
     private fun rowFor(segment: StaticSegment): String =

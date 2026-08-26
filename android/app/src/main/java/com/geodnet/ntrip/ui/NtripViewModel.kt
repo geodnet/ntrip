@@ -186,9 +186,10 @@ class NtripViewModel(app: Application) : AndroidViewModel(app) {
             // Sync whatever BLE state already exists (e.g. connected before the service finished
             // binding) rather than waiting for the next bleReceiver.state change to report it.
             bleReceiver.state.value.let { state ->
-                boundService.onBleConnectionChanged(state.status == BleStatus.CONNECTED, state.deviceAddress)
+                boundService.onBleConnectionChanged(state.status == BleStatus.CONNECTED, state.deviceAddress, state.deviceName)
                 state.latestFix?.let { boundService.onBleFix(it) }
             }
+            boundService.updateConfig(_config.value)
             pendingOutputSettings?.let {
                 applyOutputSettings(boundService, it)
                 pendingOutputSettings = null
@@ -207,7 +208,10 @@ class NtripViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         viewModelScope.launch {
-            settingsRepository.configFlow.collect { _config.value = it }
+            settingsRepository.configFlow.collect {
+                _config.value = it
+                service?.updateConfig(it)
+            }
         }
         viewModelScope.launch {
             profileRepository.profilesFlow.collect { _profiles.value = it }
@@ -220,7 +224,7 @@ class NtripViewModel(app: Application) : AndroidViewModel(app) {
         // note on the BLE receiver being ViewModel-scoped rather than service-hosted.
         viewModelScope.launch {
             bleReceiver.state.collect { state ->
-                service?.onBleConnectionChanged(state.status == BleStatus.CONNECTED, state.deviceAddress)
+                service?.onBleConnectionChanged(state.status == BleStatus.CONNECTED, state.deviceAddress, state.deviceName)
                 state.latestFix?.let { service?.onBleFix(it) }
             }
         }

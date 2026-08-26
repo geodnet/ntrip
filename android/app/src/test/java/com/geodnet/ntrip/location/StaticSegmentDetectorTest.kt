@@ -89,4 +89,26 @@ class StaticSegmentDetectorTest {
         val detector = StaticSegmentDetector()
         assertNull(detector.flush())
     }
+
+    @Test
+    fun `non-RTK fix breaks or is excluded when rtkFixOnly is true`() {
+        val detector = StaticSegmentDetector(distanceCutoffM = 0.05, minDurationMs = 1_000, rtkFixOnly = true)
+        detector.accept(base.copy(fixQuality = 4, timestampMs = 0L))
+        detector.accept(base.copy(fixQuality = 4, timestampMs = 2_000L))
+
+        // Live static segment is available
+        val current = detector.currentSegment()
+        assertNotNull(current)
+        assertEquals(2, current!!.epochCount)
+
+        // Float fix arrives (RTK fix lost) -> breaks and finalizes previous RTK fixed segment
+        val finalized = detector.accept(base.copy(fixQuality = 5, timestampMs = 3_000L))
+        assertNotNull(finalized)
+        assertEquals(2, finalized!!.epochCount)
+
+        // Further float fixes do not start a new cluster when rtkFixOnly is true
+        detector.accept(base.copy(fixQuality = 5, timestampMs = 5_000L))
+        assertNull(detector.currentSegment())
+        assertNull(detector.flush())
+    }
 }

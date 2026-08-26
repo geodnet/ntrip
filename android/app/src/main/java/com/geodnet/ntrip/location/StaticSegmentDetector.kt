@@ -25,8 +25,9 @@ data class StaticSegment(
  * calculation and much cheaper.
  */
 class StaticSegmentDetector(
-    private val distanceCutoffM: Double = 0.15,
+    private val distanceCutoffM: Double = 0.05,
     private val minDurationMs: Long = 5_000,
+    private val rtkFixOnly: Boolean = true,
 ) {
     private val cluster = mutableListOf<PositionFix>()
 
@@ -35,17 +36,17 @@ class StaticSegmentDetector(
      * count), else null. The fix that broke the cluster always starts a fresh candidate cluster
      * of its own -- it doesn't just get dropped. */
     fun accept(fix: PositionFix): StaticSegment? {
-        val effectiveCutoff = when (fix.fixQuality) {
-            4 -> distanceCutoffM // RTK Fixed: high precision
-            5 -> distanceCutoffM * 2.5 // RTK Float: medium precision
-            else -> (distanceCutoffM * 6.0).coerceAtLeast(1.0) // Autonomous/Phone fallback
-        }.coerceAtLeast(distanceCutoffM)
+        if (rtkFixOnly && fix.fixQuality != 4) {
+            val finished = finalizeClusterIfLongEnough()
+            cluster.clear()
+            return finished
+        }
 
         if (cluster.isEmpty()) {
             cluster += fix
             return null
         }
-        if (horizontalDistanceMeters(clusterMean(), fix) <= effectiveCutoff) {
+        if (horizontalDistanceMeters(clusterMean(), fix) <= distanceCutoffM) {
             cluster += fix
             return null
         }

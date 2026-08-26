@@ -142,13 +142,21 @@ class NtripForegroundService : Service() {
     private val gnssRawLogger by lazy { GnssRawLogger(this) }
     private var currentConfig: NtripConfig? = null
     private var connectedBleId: String? = null
+    private var connectedBleName: String? = null
 
     val rawLoggerState: StateFlow<RawLoggerState> by lazy { rawBinaryLogger.state }
     val gnssRawLoggerState: StateFlow<GnssRawLoggerState> by lazy { gnssRawLogger.state }
 
+    fun updateConfig(config: NtripConfig) {
+        currentConfig = config
+        segmentLogger.setMountpoint(config.mountpoint)
+    }
+
     fun setRawLoggingEnabled(enabled: Boolean) {
         if (enabled) {
-            rawBinaryLogger.start(currentConfig?.mountpoint ?: "unknown", connectedBleId ?: "rover")
+            val mountpoint = currentConfig?.mountpoint?.ifBlank { "AUTO" } ?: "AUTO"
+            val roverId = connectedBleName?.ifBlank { null } ?: connectedBleId?.ifBlank { null } ?: "rover"
+            rawBinaryLogger.start(mountpoint, roverId)
         } else {
             rawBinaryLogger.stop()
         }
@@ -211,12 +219,17 @@ class NtripForegroundService : Service() {
     }
 
     /** Called by NtripViewModel, which owns the (Activity-scoped) BLE receiver -- see
-     * android/CLAUDE.md's BLE-not-service-hosted gap. [deviceId] (address) is remembered as the
-     * Raw Binary Stream Logger's roverId for the *next* `setRawLoggingEnabled(true)` call -- it
-     * does not reopen an already-active log file if a device connects mid-session. */
-    fun onBleConnectionChanged(connected: Boolean, deviceId: String? = null) {
+     * android/CLAUDE.md's BLE-not-service-hosted gap. [deviceId] (address) / [deviceName] is remembered as the
+     * Raw Binary Stream Logger's roverId. */
+    fun onBleConnectionChanged(connected: Boolean, deviceId: String? = null, deviceName: String? = null) {
         locationAggregator.onBleConnectionChanged(connected)
         connectedBleId = if (connected) deviceId else null
+        connectedBleName = if (connected) deviceName else null
+        if (connected && rawLoggerState.value.active) {
+            val mountpoint = currentConfig?.mountpoint?.ifBlank { "AUTO" } ?: "AUTO"
+            val roverId = deviceName?.ifBlank { null } ?: deviceId?.ifBlank { null } ?: "rover"
+            rawBinaryLogger.start(mountpoint, roverId)
+        }
     }
     fun onBleFix(sentence: NmeaSentence.Gga) = locationAggregator.onBleFix(sentence)
     fun onBleRawLine(line: String) = locationAggregator.onBleRawLine(line)
@@ -262,6 +275,12 @@ class NtripForegroundService : Service() {
         val newClient = NtripClient(config, livePosition = ::currentGgaOverride)
         client = newClient
         currentConfig = config
+        segmentLogger.setMountpoint(config.mountpoint)
+        if (rawLoggerState.value.active) {
+            val mountpoint = config.mountpoint.ifBlank { "AUTO" }
+            val roverId = connectedBleName?.ifBlank { null } ?: connectedBleId?.ifBlank { null } ?: "rover"
+            rawBinaryLogger.start(mountpoint, roverId)
+        }
         _serviceState.value = NtripState(status = NtripStatus.CONNECTING)
         _rtcmStats.value = RtcmStats()
         _epochStats.value = EpochLatencyStats()
