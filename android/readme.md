@@ -64,7 +64,7 @@ saveable connection profiles instead (add/load/update/delete) — see `CLAUDE.md
 - **Interactive Gestures & Auto-Zoom**: Auto-zooms to rover on launch and smoothly pauses auto-zoom/following during manual pan/zoom gestures (with 1-tap re-center FAB).
 - **Point-Based Trajectory Tracking**: Renders discrete survey track points color-coded by RTK fix quality (Green: RTK Fix, Amber: RTK Float, Blue: DGPS, Pink: Single).
 - **Survey HUD Banner**: Displays real-time Baseline Length [km], Base Data Latency [s], Satellites, RMS horizontal/vertical accuracy, and Base ID.
-- **Static Segment Auto-Detection**: Automatically detects static survey stops using 2D horizontal clustering (>5s duration, adaptive cutoff: 15cm RTK fixed / 35cm float / 1m autonomous) with real-time UI display.
+- **Static Segment Auto-Detection**: Automatically detects static survey stops using 2D horizontal clustering (RTK-fixed only, >5s duration, 5cm tolerance, transient float dropout tolerance). Computes 9-decimal centroid coordinates, 4-decimal height, and full 4-decimal NEU standard deviations ($\sigma_N, \sigma_E, \sigma_U, \sigma_{2D}, \sigma_{3D}$) logged to timestamped CSV files.
 
 ### 📲 6. Android Mock Location & Local GIS TCP Servers
 - **Android Mock Location Provider**: Injects high-precision RTK fixes directly into the Android OS (`LocationManager`) for third-party mapping and surveying apps.

@@ -352,18 +352,18 @@ have `sdk.dir` pointing at your Android SDK.
     below), so a multi-day-long session or a process death can still lose the earliest points.
   - `StaticSegmentDetector` — pure-Kotlin (no Android deps, unit-tested in
     `StaticSegmentDetectorTest` without Robolectric/an emulator) clustering over `PositionFix`es:
-    groups consecutive fixes within `distanceCutoffM` (default 5cm, flat-earth approximation) of
-    the cluster's running mean, and reports a `StaticSegment` (mean position, positional std dev,
-    start/end time, epoch count) once a cluster both breaks *and* was held for at least
-    `minDurationMs` (default 5s) -- readme.md's "Static segment auto-detection". The point that
-    breaks a cluster seeds a new one rather than being dropped. `flush()` finalizes whatever
-    cluster is still open, called from `NtripForegroundService.onDestroy()` so a segment held right
-    up to app close isn't silently lost.
+    groups consecutive RTK Fixed (`fixQuality == 4`) fixes within `distanceCutoffM` (default 5cm, 2D horizontal)
+    of the cluster's running mean, computes centroid coordinates to 9 decimal places, height to 4 decimal
+    places, and full standard deviations in NEU (North, East, Up) in meters to 4 decimal places.
+    Supports transient float/single dropout tolerance (`maxNonRtkDropoutEpochs = 3`) to prevent momentary cycle slips
+    from killing static occupations prematurely. Exposes `currentSegment()` for live real-time candidate
+    detection while stationary and reports a finalized `StaticSegment` once held for at least `minDurationMs` (default 5s).
+    `flush()` finalizes whatever cluster is still open, called from `NtripForegroundService.onDestroy()` so a segment
+    held right up to app close isn't silently lost.
   - `SegmentLogger` — appends each finalized `StaticSegment` as a CSV row under
-    `getExternalFilesDir(null)/static_segments.csv`. This is the minimal "save the auto-detected
-    segments" readme.md asks for under its Dual Data Logger section -- it is **not** the full
-    logger described there (no per-day folder structure, no raw binary streams); see `logging/`
-    below for the actual Dual Data Logger.
+    `logs/yyyy-MM-dd/yyyy-MM-dd-HH-mm-ss-<mountpoint>-static.csv` (matching the folder and timestamped filename
+    convention of `RawBinaryLogger` and `GnssRawLogger`), including `duration_s`, 9-decimal lat/lon,
+    4-decimal height, and 4-decimal NEU standard deviations (`std_north_m`, `std_east_m`, `std_up_m`, `std_2d_m`, `std_3d_m`).
 - `logging/` — readme.md section 6's Dual Data Logger.
   - `LogPaths` — pure-Kotlin (unit-tested in `LogPathsTest`) shared GPS-time date-folder/filename
     logic for both loggers below: `logs/yyyy-MM-dd/...` where the date is GPS time, computed as
