@@ -30,6 +30,30 @@ data class RtcmStats(
     val msgCounts: Map<String, Int> = emptyMap(),
 )
 
+/** The base station's fixed position, decoded from the most recent 1005/1006 (Stationary RTK
+ * Reference Station ARP), for the map's base-station marker/baseline vector. */
+data class BaseStationFix(
+    val staId: Int,
+    val latDeg: Double,
+    val lonDeg: Double,
+    val altM: Double,
+    val antHeightM: Double?,
+    val baselineKm: Double,
+    val timestampMs: Long,
+)
+
+/** One CRC-valid RTCM frame's exact original bytes (header + payload + CRC), for relaying to a
+ * BLE RTK receiver -- see readme.md's "GNSS Ephemeris Filtering". Only CRC-valid frames are
+ * emitted; forwarding a corrupt frame to hardware downstream is never useful. */
+data class RtcmFrame(val msgType: Int, val bytes: ByteArray)
+
+/** RTCM3 message types carrying satellite ephemeris (1019 GPS, 1020 GLONASS, 1041 NavIC, 1042
+ * BeiDou, 1044 QZSS, 1045/1046 Galileo F/NAV+I/NAV) -- readme.md's "1019, 1020, and 1041-1046"
+ * filter list for BLE forwarding. Deliberately separate from [EPH_TYPES] below, which is only the
+ * subset this app can actually *decode* for the live log (no NavIC decoder exists) -- filtering
+ * doesn't require decoding, just recognizing the message type. */
+val EPHEMERIS_FILTER_TYPES = setOf(1019, 1020, 1041, 1042, 1044, 1045, 1046)
+
 private val EPH_TYPES = setOf(1019, 1020, 1042, 1044, 1045, 1046)
 
 /**
@@ -55,9 +79,27 @@ class RtcmFrameParser(private val refPosition: () -> Triple<Double, Double, Doub
     )
     val messages: SharedFlow<RtcmMessage> = _messages.asSharedFlow()
 
+    private val _baseStation = MutableStateFlow<BaseStationFix?>(null)
+    val baseStation: StateFlow<BaseStationFix?> = _baseStation.asStateFlow()
+
+    private val epochEngine = EpochLatencyEngine()
+    private val _epochStats = MutableStateFlow(EpochLatencyStats())
+    val epochStats: StateFlow<EpochLatencyStats> = _epochStats.asStateFlow()
+
+    private val _frames = MutableSharedFlow<RtcmFrame>(
+        replay = 0,
+        extraBufferCapacity = 64,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    val frames: SharedFlow<RtcmFrame> = _frames.asSharedFlow()
+
     fun reset() {
         buffer = ByteArray(0)
         _stats.value = RtcmStats()
+        _baseStation.value = null
+        epochEngine.reset()
+        epochEngine.onConnectionStart()
+        _epochStats.value = EpochLatencyStats()
     }
 
     fun feed(chunk: ByteArray, length: Int) {
@@ -125,6 +167,12 @@ class RtcmFrameParser(private val refPosition: () -> Triple<Double, Double, Doub
 
         val payload = frame.copyOfRange(3, 3 + payloadLen)
         val summary = describeFrameDetail(msgType, payload)
+        if (msgType == 1005 || msgType == 1006) updateBaseStation(msgType, payload, now)
+        _frames.tryEmit(RtcmFrame(msgType, frame))
+        if (msgType in LEGACY_OBSERVATION_TYPES || getMsmSystem(msgType) != null) {
+            epochEngine.onObservationMessage()
+            _epochStats.value = epochEngine.snapshot()
+        }
 
         _stats.update {
             val counts = it.msgCounts.toMutableMap()
@@ -132,6 +180,34 @@ class RtcmFrameParser(private val refPosition: () -> Triple<Double, Double, Doub
             it.copy(msgsDecoded = it.msgsDecoded + 1, msgCounts = counts)
         }
         _messages.tryEmit(RtcmMessage(msgKey, msgType, frame.size, true, now, summary))
+    }
+
+    /** Duplicates the 1005/1006 decode already done in [describeFrameDetail] for that message
+     * type -- cheap bit-field work, a handful of times per minute, so kept as a separate,
+     * dedicated update rather than threading a callback through the string-building function. */
+    private fun updateBaseStation(msgType: Int, payload: ByteArray, timestampMs: Long) {
+        try {
+            val d = StationDecoders.decode1005Or1006(payload, msgType)
+            val llh = GeoMath.ecefToLlh(d.x, d.y, d.z)
+            val (lat, lon, alt) = refPosition()
+            val rover = GeoMath.llhToEcef(lat, lon, alt)
+            val dx = d.x - rover.x
+            val dy = d.y - rover.y
+            val dz = d.z - rover.z
+            val baselineKm = sqrt(dx * dx + dy * dy + dz * dz) / 1000
+            _baseStation.value = BaseStationFix(
+                staId = d.staId,
+                latDeg = llh.latDeg,
+                lonDeg = llh.lonDeg,
+                altM = llh.heightM,
+                antHeightM = d.antHeightM,
+                baselineKm = baselineKm,
+                timestampMs = timestampMs,
+            )
+        } catch (_: Exception) {
+            // leave the previous value -- describeFrameDetail's own try/catch already reports
+            // decode errors in the live log
+        }
     }
 
     private fun describeFrameDetail(msgType: Int, payload: ByteArray): String = try {
@@ -194,5 +270,10 @@ class RtcmFrameParser(private val refPosition: () -> Triple<Double, Double, Doub
 
     companion object {
         private const val SYNC_BYTE: Byte = 0xD3.toByte()
+
+        /** Legacy (non-MSM) GPS/GLONASS observation message types, per readme.md section 3 --
+         * these aren't detail-decoded (only counted) but still count as "an epoch arrived" for
+         * [EpochLatencyEngine] purposes. */
+        private val LEGACY_OBSERVATION_TYPES = 1001..1012
     }
 }

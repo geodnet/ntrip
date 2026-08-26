@@ -26,6 +26,7 @@ object RtcmMessageDescriptions {
         1020 to "GLONASS ephemeris",
         1029 to "Unicode text string",
         1033 to "Receiver and antenna descriptors",
+        1041 to "NavIC/IRNSS ephemeris",
         1042 to "BeiDou ephemeris",
         1044 to "QZSS ephemeris",
         1045 to "Galileo F/NAV ephemeris",

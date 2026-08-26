@@ -11,6 +11,12 @@ sealed class NmeaSentence {
         val hdop: Double,
         val altitudeM: Double,
         val geoidSeparationM: Double,
+        /** Age of differential corrections, seconds (field 13) -- 0.0 if absent/not applicable
+         * (e.g. no differential fix). */
+        val diffAgeSec: Double = 0.0,
+        /** Differential reference station ID (field 14) -- 0 if absent. Many receivers report 0
+         * here even with a valid differential fix, so treat 0 as "unknown", not "station #0". */
+        val diffStationId: Int = 0,
     ) : NmeaSentence()
 
     data class Rmc(
@@ -32,5 +38,14 @@ sealed class NmeaSentence {
         val latStdDevM: Double,
         val lonStdDevM: Double,
         val altStdDevM: Double,
+    ) : NmeaSentence()
+
+    /** GSA carries PDOP/HDOP/VDOP together -- GGA only has HDOP, so this is the only source of
+     * the other two (readme.md explicitly calls out all three). */
+    data class Gsa(
+        val fixType: Int, // 1 = no fix, 2 = 2D, 3 = 3D
+        val pdop: Double,
+        val hdop: Double,
+        val vdop: Double,
     ) : NmeaSentence()
 }

@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<link rel="stylesheet" href="leaflet.css">
+<style>
+  html, body { height: 100%; margin: 0; padding: 0; background: #dfe3e6; }
+  #map {
+    height: 100%;
+    width: 100%;
+    background-color: #0f172a;
+    background-image:
+      linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px);
+    background-size: 28px 28px;
+  }
+  #info-panel {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    z-index: 1000;
+    background: rgba(15, 23, 42, 0.85);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 10px;
+    padding: 8px 14px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    color: #38bdf8;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    display: none;
+  }
+  #info-panel.visible { display: block; }
+  .rover-pulse-wrap {
+    position: relative;
+    width: 24px;
+    height: 24px;
+  }
+  .rover-pulse {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    border-radius: 50%;
+    opacity: 0.8;
+    animation: roverPulseAnim 1.8s infinite ease-out;
+  }
+  .rover-icon {
+    position: absolute;
+    top: 4px; left: 4px;
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    border: 2px solid #ffffff;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.6);
+  }
+  @keyframes roverPulseAnim {
+    0% { transform: scale(0.6); opacity: 0.9; }
+    70% { transform: scale(1.6); opacity: 0.15; }
+    100% { transform: scale(1.8); opacity: 0; }
+  }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="info-panel"></div>
+<script src="leaflet.js"></script>
+<script>
+(function () {
+  var satellite = L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    { maxZoom: 19, attribution: 'Tiles &copy; Esri' }
+  );
+  var streets = L.tileLayer(
+    'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    { maxZoom: 19, attribution: '&copy; OpenStreetMap' }
+  );
+
+  var savedBaseMap = (function() {
+    try { return localStorage.getItem('geodnet_basemap'); } catch(e) { return null; }
+  })() || 'Satellite';
+  var initialLayer = savedBaseMap === 'Streets' ? streets : satellite;
+
+  var map = L.map('map', { zoomControl: false, attributionControl: false, layers: [initialLayer] }).setView([0, 0], 2);
+  L.control.layers({ 'Satellite': satellite, 'Streets': streets }, null, { position: 'bottomright', collapsed: true }).addTo(map);
+
+  map.on('baselayerchange', function (e) {
+    if (e.name) {
+      try { localStorage.setItem('geodnet_basemap', e.name); } catch(err) {}
+    }
+  });
+
+  window.setBaseMap = function(name) {
+    if (name === 'Streets') {
+      map.removeLayer(satellite);
+      map.addLayer(streets);
+    } else {
+      map.removeLayer(streets);
+      map.addLayer(satellite);
+    }
+    try { localStorage.setItem('geodnet_basemap', name); } catch(err) {}
+  };
+
+  var roverMarker = null;
+  var baseMarker = null;
+  var baselineLine = null;
+  var trajectoryLayer = L.layerGroup().addTo(map);
+  var segmentLayer = L.layerGroup().addTo(map);
+
+  function createTrajectoryPointMarker(lat, lon, quality) {
+    var c = qualityColor(quality || 1);
+    return L.circleMarker([lat, lon], {
+      radius: 3.5,
+      weight: 1,
+      color: '#ffffff',
+      fillColor: c,
+      fillOpacity: 0.92
+    });
+  }
+
+  var baseVisible = false;
+  var followRover = true;
+  var lastRover = null;
+  var lastBase = null;
+  var hasCenteredOnce = false;
+
+  map.on('dragstart', function () { followRover = false; });
+
+  function qualityColor(q) {
+    if (q === 4) return '#10b981'; // RTK fixed
+    if (q === 5) return '#f59e0b'; // RTK float
+    if (q === 2) return '#3b82f6'; // DGPS
+    if (q === 1) return '#ec4899'; // Single
+    return '#9ca3af';
+  }
+
+  function roverIcon(quality) {
+    var c = qualityColor(quality);
+    return L.divIcon({
+      className: '',
+      html: '<div class="rover-pulse-wrap">' +
+            '<div class="rover-pulse" style="background:' + c + ';"></div>' +
+            '<div class="rover-icon" style="background:' + c + ';"></div>' +
+            '</div>',
+      iconSize: [24, 24],
+      iconAnchor: [12, 12],
+    });
+  }
+
+  var BASE_ICON = L.divIcon({
+    className: '',
+    html: '<svg width="28" height="28" viewBox="0 0 28 28">' +
+      '<polygon points="14,2 26,24 2,24" fill="#10b981" stroke="#0f172a" stroke-width="2.5"/>' +
+      '<circle cx="14" cy="17" r="3" fill="#ffffff"/>' +
+      '</svg>',
+    iconSize: [28, 28],
+    iconAnchor: [14, 22],
+  });
+
+  function updateInfoPanel() {
+    var panel = document.getElementById('info-panel');
+    if (baseVisible && lastBase) {
+      panel.className = 'visible';
+      panel.innerHTML = '📏 Baseline: ' + lastBase.baselineKm.toFixed(3) + ' km';
+    } else {
+      panel.className = '';
+    }
+  }
+
+  function updateBaselineLine() {
+    if (baselineLine) { map.removeLayer(baselineLine); baselineLine = null; }
+    if (baseVisible && lastBase && lastRover) {
+      baselineLine = L.polyline(
+        [[lastRover.lat, lastRover.lon], [lastBase.lat, lastBase.lon]],
+        { color: '#f59e0b', weight: 2.5, dashArray: '6,6', opacity: 0.9 }
+      ).addTo(map);
+    }
+  }
+
+  function fitToRoverAndBase() {
+    if (lastRover && lastBase) {
+      map.fitBounds(
+        L.latLngBounds([lastRover.lat, lastRover.lon], [lastBase.lat, lastBase.lon]),
+        { padding: [50, 50] }
+      );
+    } else if (lastRover) {
+      map.setView([lastRover.lat, lastRover.lon], 18);
+    }
+  }
+
+  window.centerRover = function () {
+    followRover = true;
+    if (lastRover) {
+      map.setView([lastRover.lat, lastRover.lon], Math.max(map.getZoom(), 17), { animate: true });
+    }
+  };
+
+  window.fitExtents = function () {
+    fitToRoverAndBase();
+  };
+
+  window.setRover = function (lat, lon, altM, quality) {
+    lastRover = { lat: lat, lon: lon, alt: altM, quality: quality };
+    if (!roverMarker) {
+      roverMarker = L.marker([lat, lon], { icon: roverIcon(quality) }).addTo(map);
+    } else {
+      roverMarker.setLatLng([lat, lon]);
+      roverMarker.setIcon(roverIcon(quality));
+    }
+    updateBaselineLine();
+    updateInfoPanel();
+    if (!baseVisible) {
+      if (!hasCenteredOnce) {
+        map.setView([lat, lon], 18);
+        hasCenteredOnce = true;
+      } else if (followRover) {
+        map.panTo([lat, lon], { animate: true });
+      }
+    }
+  };
+
+  window.setBase = function (lat, lon, altM, staId, baselineKm) {
+    lastBase = { lat: lat, lon: lon, alt: altM, staId: staId, baselineKm: baselineKm };
+    if (!baseMarker) {
+      baseMarker = L.marker([lat, lon], { icon: BASE_ICON });
+      if (baseVisible) baseMarker.addTo(map);
+    } else {
+      baseMarker.setLatLng([lat, lon]);
+    }
+    updateBaselineLine();
+    updateInfoPanel();
+  };
+
+  window.clearBase = function () {
+    lastBase = null;
+    if (baseMarker) { map.removeLayer(baseMarker); baseMarker = null; }
+    updateBaselineLine();
+    updateInfoPanel();
+  };
+
+  window.setBaseVisible = function (visible) {
+    baseVisible = !!visible;
+    if (baseMarker) {
+      if (baseVisible) { map.addLayer(baseMarker); } else { map.removeLayer(baseMarker); }
+    }
+    updateBaselineLine();
+    updateInfoPanel();
+    if (baseVisible) {
+      fitToRoverAndBase();
+      followRover = false;
+    } else {
+      followRover = true;
+      if (lastRover) map.setView([lastRover.lat, lastRover.lon], Math.max(map.getZoom(), 16));
+    }
+  };
+
+  var nearbyStationLayer = L.layerGroup().addTo(map);
+  var nearbyVisible = true;
+
+  var NEARBY_BASE_ICON = L.divIcon({
+    className: '',
+    html: '<svg width="22" height="22" viewBox="0 0 22 22">' +
+      '<polygon points="11,2 20,18 2,18" fill="#8b5cf6" stroke="#0f172a" stroke-width="2"/>' +
+      '<circle cx="11" cy="13" r="2.5" fill="#ffffff"/>' +
+      '</svg>',
+    iconSize: [22, 22],
+    iconAnchor: [11, 16],
+  });
+
+  window.setNearbyStations = function (stationsJson) {
+    nearbyStationLayer.clearLayers();
+    if (!stationsJson) return;
+    try {
+      var stations = JSON.parse(stationsJson);
+      for (var i = 0; i < stations.length; i++) {
+        var st = stations[i];
+        var displayName = (st.shortName || st.name.slice(-5)).toUpperCase();
+        var azimuthStr = st.azimuthDeg !== undefined ? (st.azimuthDeg.toFixed(1) + '° ' + (st.cardinalDirection || '')) : '';
+        var isOpt = st.distanceKm <= 25.0;
+        var badgeColor = isOpt ? '#10b981' : '#f59e0b';
+        var badgeText = isOpt ? 'Optimal RTK' : 'Extended RTK';
+
+        var popupContent =
+          '<div style="font-family:-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif; min-width:150px; padding:2px;">' +
+          '<div style="font-weight:700; font-size:13px; color:#0f172a; display:flex; justify-content:space-between; align-items:center;">' +
+          '<span>Base #' + displayName + '</span>' +
+          '<span style="background:' + badgeColor + '20; color:' + badgeColor + '; border:1px solid ' + badgeColor + '; border-radius:4px; padding:1px 5px; font-size:9px; font-weight:700;">' + badgeText + '</span>' +
+          '</div>' +
+          '<div style="font-size:12px; color:#334155; margin-top:4px;">Baseline: <b>' + st.distanceKm.toFixed(2) + ' km</b></div>' +
+          (azimuthStr ? '<div style="font-size:11px; color:#64748b; margin-top:2px;">Azimuth: <b>' + azimuthStr + '</b></div>' : '') +
+          '<div style="font-size:10px; color:#94a3b8; font-family:monospace; margin-top:4px;">' + st.lat.toFixed(6) + ', ' + st.lng.toFixed(6) + '</div>' +
+          '</div>';
+
+        var marker = L.marker([st.lat, st.lng], { icon: NEARBY_BASE_ICON })
+          .bindPopup(popupContent)
+          .bindTooltip('#' + displayName + ' (' + st.distanceKm.toFixed(1) + 'km' + (azimuthStr ? ', ' + azimuthStr : '') + ')', { permanent: false, direction: 'top' });
+
+        if (nearbyVisible) marker.addTo(nearbyStationLayer);
+      }
+    } catch (e) {
+      console.error('Error setting nearby stations', e);
+    }
+  };
+
+  window.setNearbyStationsVisible = function (visible) {
+    nearbyVisible = !!visible;
+    if (nearbyVisible) {
+      map.addLayer(nearbyStationLayer);
+    } else {
+      map.removeLayer(nearbyStationLayer);
+    }
+  };
+
+  window.setTrajectory = function (pointsJson) {
+    trajectoryLayer.clearLayers();
+    if (!pointsJson) return;
+    try {
+      var pts = JSON.parse(pointsJson);
+      for (var i = 0; i < pts.length; i++) {
+        var p = pts[i];
+        createTrajectoryPointMarker(p[0], p[1], p[2]).addTo(trajectoryLayer);
+      }
+    } catch (e) {
+      console.error('Error setting trajectory', e);
+    }
+  };
+
+  window.appendTrajectoryPoints = function (pointsJson) {
+    if (!pointsJson) return;
+    try {
+      var pts = JSON.parse(pointsJson);
+      for (var i = 0; i < pts.length; i++) {
+        var p = pts[i];
+        createTrajectoryPointMarker(p[0], p[1], p[2]).addTo(trajectoryLayer);
+      }
+    } catch (e) {
+      console.error('Error appending trajectory', e);
+    }
+  };
+
+  window.setStaticSegments = function (segmentsJson) {
+    var segs = JSON.parse(segmentsJson);
+    segmentLayer.clearLayers();
+    for (var i = 0; i < segs.length; i++) {
+      var s = segs[i];
+      L.circleMarker([s[0], s[1]], {
+        radius: 7, color: '#8b5cf6', weight: 2, fillColor: '#c4b5fd', fillOpacity: 0.85
+      }).bindTooltip('Static Survey: epochs=' + s[2] + '  std=' + s[3].toFixed(3) + 'm').addTo(segmentLayer);
+    }
+  };
+})();
+</script>
+</body>
+</html>

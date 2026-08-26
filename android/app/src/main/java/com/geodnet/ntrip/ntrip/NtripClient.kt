@@ -1,5 +1,8 @@
 package com.geodnet.ntrip.ntrip
 
+import com.geodnet.ntrip.rtcm.BaseStationFix
+import com.geodnet.ntrip.rtcm.EpochLatencyStats
+import com.geodnet.ntrip.rtcm.RtcmFrame
 import com.geodnet.ntrip.rtcm.RtcmFrameParser
 import com.geodnet.ntrip.rtcm.RtcmMessage
 import com.geodnet.ntrip.rtcm.RtcmStats
@@ -28,14 +31,28 @@ import java.util.Base64
  * uploads a GGA position fix on an interval, and decodes incoming RTCM3 frames via
  * [RtcmFrameParser]. Mirrors node/ntrip_client.js's connection flow.
  */
-class NtripClient(private val config: NtripConfig) {
+class NtripClient(
+    private val config: NtripConfig,
+    /** Supplies a live rover position (BLE fix if connected, else phone GPS fallback -- see
+     * `location.LocationFixAggregator`) to use instead of `config`'s static lat/lon/alt for both
+     * the GGA uploaded to the caster and the baseline-distance reference position, whenever it
+     * returns non-null. Null (the default) preserves the original always-static behavior. */
+    private val livePosition: (() -> GgaPositionOverride?)? = null,
+) {
 
     private val _state = MutableStateFlow(NtripState())
     val state: StateFlow<NtripState> = _state.asStateFlow()
 
-    private val rtcmParser = RtcmFrameParser { Triple(config.latitude, config.longitude, config.altitude) }
+    private val rtcmParser = RtcmFrameParser {
+        val live = livePosition?.invoke()
+        if (live != null) Triple(live.latitude, live.longitude, live.altitudeM)
+        else Triple(config.latitude, config.longitude, config.altitude)
+    }
     val rtcmStats: StateFlow<RtcmStats> = rtcmParser.stats
     val rtcmMessages: SharedFlow<RtcmMessage> = rtcmParser.messages
+    val baseStation: StateFlow<BaseStationFix?> = rtcmParser.baseStation
+    val rtcmFrames: SharedFlow<RtcmFrame> = rtcmParser.frames
+    val epochStats: StateFlow<EpochLatencyStats> = rtcmParser.epochStats
 
     /** Raw bytes as received from the caster, for forwarding to a BLE RTK receiver -- separate
      * from [rtcmMessages], which carries decoded/summarized messages, not the original bytes. */
@@ -109,7 +126,15 @@ class NtripClient(private val config: NtripConfig) {
     private suspend fun ggaUploadLoop() {
         while (true) {
             delay(config.ggaIntervalMs)
-            val sentence = GgaGenerator.generate(config) + "\r\n"
+            val isAutoMountpoint = config.mountpoint.isBlank() || config.mountpoint.equals("AUTO", ignoreCase = true)
+            val live = if (isAutoMountpoint) livePosition?.invoke() else null
+            val sentence = (
+                if (live != null) {
+                    GgaGenerator.generate(live.latitude, live.longitude, live.altitudeM, live.numSatellites, live.hdop)
+                } else {
+                    GgaGenerator.generate(config)
+                }
+                ) + "\r\n"
             withContext(Dispatchers.IO) {
                 try {
                     socket?.getOutputStream()?.apply {

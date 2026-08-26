@@ -7,7 +7,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
-import com.geodnet.ntrip.ui.NtripScreen
+import com.geodnet.ntrip.ui.AppRoot
 import com.geodnet.ntrip.ui.NtripViewModel
 import com.geodnet.ntrip.ui.theme.NtripAppTheme
 
@@ -16,7 +16,12 @@ class MainActivity : ComponentActivity() {
     private val viewModel: NtripViewModel by viewModels()
 
     private val requestPermissions =
-        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { /* no-op either way; the BLE UI checks state and re-prompts as needed */ }
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
+            if (results[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+                results[Manifest.permission.ACCESS_COARSE_LOCATION] == true) {
+                viewModel.refreshCoverageStations()
+            }
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -25,7 +30,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             NtripAppTheme {
-                NtripScreen(viewModel)
+                AppRoot(viewModel)
             }
         }
     }
@@ -38,9 +43,10 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             permissions += Manifest.permission.BLUETOOTH_SCAN
             permissions += Manifest.permission.BLUETOOTH_CONNECT
-        } else {
-            permissions += Manifest.permission.ACCESS_FINE_LOCATION
         }
+        // Unconditional (not just pre-S): pre-S it also satisfies BLE scan results, but it's now
+        // always needed for the phone-GPS fallback in LocationFixAggregator.
+        permissions += Manifest.permission.ACCESS_FINE_LOCATION
         return permissions.toTypedArray()
     }
 }

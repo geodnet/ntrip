@@ -9,8 +9,10 @@ data class BleConnectionState(
     val errorMessage: String? = null,
     val latestFix: NmeaSentence.Gga? = null,
     val latestGst: NmeaSentence.Gst? = null,
+    val latestGsa: NmeaSentence.Gsa? = null,
     val bytesFromReceiver: Long = 0,
     val bytesToReceiver: Long = 0,
+    val mtu: Int = 23,
 )
 
 /** One scan result, kept minimal -- just enough to show a picker and connect. */

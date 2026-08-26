@@ -12,29 +12,38 @@ import kotlin.math.floor
  */
 object GgaGenerator {
 
-    fun generate(config: NtripConfig, staId: Int = 0, age: Double = 0.0): String {
+    fun generate(config: NtripConfig, staId: Int = 0, age: Double = 0.0): String =
+        generate(config.latitude, config.longitude, config.altitude, config.numSatellites, config.hdop, staId, age)
+
+    fun generate(
+        latitude: Double,
+        longitude: Double,
+        altitude: Double,
+        numSatellites: Int,
+        hdop: Double,
+        staId: Int = 0,
+        age: Double = 0.0,
+    ): String {
         val now = ZonedDateTime.now(ZoneOffset.UTC)
         val time = "%02d%02d%02d.000".format(now.hour, now.minute, now.second)
 
-        val latDir = if (config.latitude >= 0) "N" else "S"
-        val lonDir = if (config.longitude >= 0) "E" else "W"
+        val latDir = if (latitude >= 0) "N" else "S"
+        val lonDir = if (longitude >= 0) "E" else "W"
 
-        val latitude = abs(config.latitude)
-        val longitude = abs(config.longitude)
+        val latAbs = abs(latitude)
+        val lonAbs = abs(longitude)
 
-        val latDeg = floor(latitude).toInt()
-        val lonDeg = floor(longitude).toInt()
+        val latDeg = floor(latAbs).toInt()
+        val lonDeg = floor(lonAbs).toInt()
 
-        val latMin = (latitude - latDeg) * 60.0
-        val lonMin = (longitude - lonDeg) * 60.0
+        val latMin = (latAbs - latDeg) * 60.0
+        val lonMin = (lonAbs - lonDeg) * 60.0
 
         val latStr = "%02d%07.4f".format(latDeg, latMin)
         val lonStr = "%03d%07.4f".format(lonDeg, lonMin)
 
         val gga = "\$GPGGA,$time,$latStr,$latDir,$lonStr,$lonDir,1," +
-            "${config.numSatellites},%.2f,%.2f,M,0.0,M,%.2f,$staId".format(
-                config.hdop, config.altitude, age
-            )
+            "$numSatellites,%.2f,%.2f,M,0.0,M,%.2f,$staId".format(hdop, altitude, age)
         val checksum = checksum(gga)
         return "$gga*${checksum.toString(16).uppercase().padStart(2, '0')}"
     }

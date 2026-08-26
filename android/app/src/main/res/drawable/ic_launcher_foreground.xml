@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Outer Geodesic Sphere Grid -->
+    <path
+        android:strokeColor="#38BDF8"
+        android:strokeWidth="1.5"
+        android:strokeAlpha="0.6"
+        android:fillColor="#00000000"
+        android:pathData="M54,54m-32,0a32,32 0,1,1 64,0a32,32 0,1,1 -64,0" />
+    <path
+        android:strokeColor="#38BDF8"
+        android:strokeWidth="1"
+        android:strokeAlpha="0.4"
+        android:fillColor="#00000000"
+        android:pathData="M54,22 C38,32 38,76 54,86 C70,76 70,32 54,22 Z" />
+    <path
+        android:strokeColor="#38BDF8"
+        android:strokeWidth="1"
+        android:strokeAlpha="0.4"
+        android:fillColor="#00000000"
+        android:pathData="M22,54 C32,38 76,38 86,54 C76,70 32,70 22,54 Z" />
+
+    <!-- Radio Waves / RTK Correction Pulses -->
+    <path
+        android:strokeColor="#10B981"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M40,40 A20,20 0 0,1 68,40" />
+    <path
+        android:strokeColor="#10B981"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M45,46 A12,12 0 0,1 63,46" />
+
+    <!-- Central High-Precision GNSS Antenna Pyramid Beacon -->
+    <path
+        android:fillColor="#38BDF8"
+        android:pathData="M54,42 L64,74 L54,70 Z" />
+    <path
+        android:fillColor="#0284C7"
+        android:pathData="M54,42 L44,74 L54,70 Z" />
+    <path
+        android:strokeColor="#E0F2FE"
+        android:strokeWidth="1.5"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000"
+        android:pathData="M54,42 L64,74 L54,70 L44,74 Z" />
+
+    <!-- Glowing Beacon Tip -->
+    <path
+        android:fillColor="#10B981"
+        android:pathData="M54,42m-3.5,0a3.5,3.5 0,1,1 7,0a3.5,3.5 0,1,1 -7,0" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,42m-1.5,0a1.5,1.5 0,1,1 3,0a1.5,1.5 0,1,1 -3,0" />
+
+    <!-- Orbiting Satellite Indicator Icons -->
+    <!-- Sat 1 (Top Left) -->
+    <path
+        android:fillColor="#E2E8F0"
+        android:pathData="M27,27 L33,33 L30,36 L24,30 Z" />
+    <path
+        android:strokeColor="#38BDF8"
+        android:strokeWidth="1.5"
+        android:pathData="M23,24 L31,32 M26,35 L34,27" />
+
+    <!-- Sat 2 (Top Right) -->
+    <path
+        android:fillColor="#E2E8F0"
+        android:pathData="M81,27 L75,33 L78,36 L84,30 Z" />
+    <path
+        android:strokeColor="#38BDF8"
+        android:strokeWidth="1.5"
+        android:pathData="M85,24 L77,32 M82,35 L74,27" />
+</vector>

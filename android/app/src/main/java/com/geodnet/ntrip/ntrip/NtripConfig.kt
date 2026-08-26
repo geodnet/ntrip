@@ -14,3 +14,16 @@ data class NtripConfig(
     val hdop: Double = 1.0,
     val ggaIntervalMs: Long = 5000L,
 )
+
+/** Overrides [NtripConfig]'s static lat/lon/alt/numSatellites/hdop for one GGA upload with a live
+ * position -- see [NtripClient]'s `livePosition` param and readme.md's "Smart Phone Location GGA
+ * Fallback" (the BLE-fix-else-phone-fallback logic itself lives in
+ * `location.LocationFixAggregator`; this is just the shape NtripClient needs it in, kept in the
+ * `ntrip` package so NtripClient doesn't have to depend on the `location` package's `PositionFix`). */
+data class GgaPositionOverride(
+    val latitude: Double,
+    val longitude: Double,
+    val altitudeM: Double,
+    val numSatellites: Int,
+    val hdop: Double,
+)

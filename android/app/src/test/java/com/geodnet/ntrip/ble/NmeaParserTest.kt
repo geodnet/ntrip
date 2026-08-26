@@ -21,6 +21,19 @@ class NmeaParserTest {
         assertEquals(0.9, gga.hdop, 1e-9)
         assertEquals(545.4, gga.altitudeM, 1e-9)
         assertEquals(46.9, gga.geoidSeparationM, 1e-9)
+        // Fields 13/14 (age of corrections, diff station id) are absent in this sentence.
+        assertEquals(0.0, gga.diffAgeSec, 1e-9)
+        assertEquals(0, gga.diffStationId)
+    }
+
+    @Test
+    fun `parses differential age and reference station id when present`() {
+        val line = "\$GNGGA,123519,4807.038,N,01131.000,E,4,08,0.9,545.4,M,46.9,M,1.2,0001*70"
+        val gga = NmeaParser.parse(line) as NmeaSentence.Gga
+
+        assertEquals(4, gga.fixQuality)
+        assertEquals(1.2, gga.diffAgeSec, 1e-9)
+        assertEquals(1, gga.diffStationId)
     }
 
     @Test
@@ -58,6 +71,17 @@ class NmeaParserTest {
         assertEquals(0.8, gst.latStdDevM, 1e-9)
         assertEquals(0.6, gst.lonStdDevM, 1e-9)
         assertEquals(1.2, gst.altStdDevM, 1e-9)
+    }
+
+    @Test
+    fun `parses a valid GSA sentence`() {
+        val line = "\$GNGSA,A,3,04,05,,09,12,,,24,,,,,2.5,1.3,2.1*27"
+        val gsa = NmeaParser.parse(line) as NmeaSentence.Gsa
+
+        assertEquals(3, gsa.fixType)
+        assertEquals(2.5, gsa.pdop, 1e-9)
+        assertEquals(1.3, gsa.hdop, 1e-9)
+        assertEquals(2.1, gsa.vdop, 1e-9)
     }
 
     @Test

@@ -37,6 +37,7 @@ object NmeaParser {
                 "GGA" -> parseGga(fields)
                 "RMC" -> parseRmc(fields)
                 "GST" -> parseGst(fields)
+                "GSA" -> parseGsa(fields)
                 else -> null
             }
         } catch (_: Exception) {
@@ -75,6 +76,8 @@ object NmeaParser {
             hdop = field(f, 8).toDoubleOrNull() ?: 0.0,
             altitudeM = field(f, 9).toDoubleOrNull() ?: 0.0,
             geoidSeparationM = field(f, 11).toDoubleOrNull() ?: 0.0,
+            diffAgeSec = field(f, 13).toDoubleOrNull() ?: 0.0,
+            diffStationId = field(f, 14).toIntOrNull() ?: 0,
         )
     }
 
@@ -89,6 +92,18 @@ object NmeaParser {
             speedKnots = field(f, 7).toDoubleOrNull() ?: 0.0,
             courseDeg = field(f, 8).toDoubleOrNull() ?: 0.0,
             date = field(f, 9),
+        )
+    }
+
+    /** $--GSA,<mode>,<fixType>,<sv1>..<sv12>,<PDOP>,<HDOP>,<VDOP> -- 12 satellite-ID slots (fields
+     * 3..14) always precede PDOP/HDOP/VDOP regardless of how many are actually filled in. */
+    private fun parseGsa(f: List<String>): NmeaSentence.Gsa? {
+        val fixType = field(f, 2).toIntOrNull() ?: return null
+        return NmeaSentence.Gsa(
+            fixType = fixType,
+            pdop = field(f, 15).toDoubleOrNull() ?: 0.0,
+            hdop = field(f, 16).toDoubleOrNull() ?: 0.0,
+            vdop = field(f, 17).toDoubleOrNull() ?: 0.0,
         )
     }
 

@@ -1,6 +1,7 @@
 package com.geodnet.ntrip.data
 
 import android.content.Context
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
@@ -32,6 +33,13 @@ class SettingsRepository(private val context: Context) {
         val LONGITUDE = doublePreferencesKey("longitude")
         val ALTITUDE = doublePreferencesKey("altitude")
         val GGA_INTERVAL_MS = longPreferencesKey("gga_interval_ms")
+        val MOCK_LOCATION_ENABLED = booleanPreferencesKey("mock_location_enabled")
+        val NMEA_SERVER_ENABLED = booleanPreferencesKey("nmea_server_enabled")
+        val RTCM_SERVER_ENABLED = booleanPreferencesKey("rtcm_server_enabled")
+        val SHOW_BASE_STATION = booleanPreferencesKey("show_base_station")
+        val FILTER_EPHEMERIS_FOR_BLE = booleanPreferencesKey("filter_ephemeris_for_ble")
+        val RAW_LOGGING_ENABLED = booleanPreferencesKey("raw_logging_enabled")
+        val GNSS_RAW_LOGGING_ENABLED = booleanPreferencesKey("gnss_raw_logging_enabled")
     }
 
     val configFlow: Flow<NtripConfig> = context.dataStore.data.map { prefs ->
@@ -61,5 +69,45 @@ class SettingsRepository(private val context: Context) {
             prefs[Keys.ALTITUDE] = config.altitude
             prefs[Keys.GGA_INTERVAL_MS] = config.ggaIntervalMs
         }
+    }
+
+    val outputSettingsFlow: Flow<OutputSettings> = context.dataStore.data.map { prefs ->
+        OutputSettings(
+            mockLocationEnabled = prefs[Keys.MOCK_LOCATION_ENABLED] ?: false,
+            nmeaServerEnabled = prefs[Keys.NMEA_SERVER_ENABLED] ?: false,
+            rtcmServerEnabled = prefs[Keys.RTCM_SERVER_ENABLED] ?: false,
+            showBaseStation = prefs[Keys.SHOW_BASE_STATION] ?: false,
+            filterEphemerisForBle = prefs[Keys.FILTER_EPHEMERIS_FOR_BLE] ?: false,
+            rawLoggingEnabled = prefs[Keys.RAW_LOGGING_ENABLED] ?: false,
+            gnssRawLoggingEnabled = prefs[Keys.GNSS_RAW_LOGGING_ENABLED] ?: false,
+        )
+    }
+
+    suspend fun saveMockLocationEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.MOCK_LOCATION_ENABLED] = enabled }
+    }
+
+    suspend fun saveNmeaServerEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.NMEA_SERVER_ENABLED] = enabled }
+    }
+
+    suspend fun saveRtcmServerEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.RTCM_SERVER_ENABLED] = enabled }
+    }
+
+    suspend fun saveShowBaseStation(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.SHOW_BASE_STATION] = enabled }
+    }
+
+    suspend fun saveFilterEphemerisForBle(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.FILTER_EPHEMERIS_FOR_BLE] = enabled }
+    }
+
+    suspend fun saveRawLoggingEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.RAW_LOGGING_ENABLED] = enabled }
+    }
+
+    suspend fun saveGnssRawLoggingEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.GNSS_RAW_LOGGING_ENABLED] = enabled }
     }
 }

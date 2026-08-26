@@ -2,10 +2,26 @@ Build an advanced, high-precision Android application designed for GNSS surveyin
 
 ## Implementation status
 
-This is the product spec / feature vision. Actual implementation is early-stage: Ntrip caster
-connection (connect, upload GGA, receive RTCM), real-time RTCM 3.x decoding, and BLE RTK receiver
-integration (Nordic UART Service scan/connect, NMEA parsing, RTCM forwarding) are implemented.
-Offline map, mock location provider, TCP servers, and the data logger are not yet.
+Every feature section below has an implementation, with two specific, deliberate exceptions kept
+narrow and documented rather than silently skipped — see [`CLAUDE.md`](./CLAUDE.md)'s Status
+section for exactly what and why:
+
+1. RTCM 1230 (GLONASS code-phase biases) is recognized/counted but not detail-decoded — this
+   codebase verifies RTCM bit-level decoders against independently-computed values before shipping
+   them (see `CLAUDE.md`), and there was no way to do that for 1230 in this environment.
+2. The Latency Engine's "20-bit MSM TOW modulo matching" isn't implemented as literally worded
+   (real MSM TOW fields are ~30 bits); it correlates epochs by arrival-time clustering instead,
+   which still produces the same Δt_epoch = t_last − t_first the spec asks for.
+
+Also worth knowing: **nothing has been run on a real Android device or emulator** while building
+this — none was available in the environment this was built in. Every piece of pure logic has real
+unit tests, but the BLE/location/WebView/sensor/networking integration points all need a first
+real-device smoke test before you trust them end-to-end.
+
+One thing beyond this spec's original scope: section 2's "NTRIP Credentials Persistence" bullet
+below described persisting *one* set of credentials. The app now manages a full list of named,
+saveable connection profiles instead (add/load/update/delete) — see `CLAUDE.md`'s
+`NtripProfile`/`NtripProfileRepository` entry.
 
 - Building: `cd android && JAVA_HOME="<path to a JDK>" ./gradlew assembleDebug` (needs
   `local.properties`, not committed, with `sdk.dir` pointing at your Android SDK). Targets
@@ -15,49 +31,47 @@ Offline map, mock location provider, TCP servers, and the data logger are not ye
 
 ---
 
-## ?? Key Features
+## 🚀 Key Features
 
-### ?? 1. BLE RTK Receiver Integration
-- Connects seamlessly to Bluetooth Low Energy (BLE) GNSS receivers using standard Nordic UART Service (NUS).
-- Continuously parses raw NMEA sentences (`$GNGGA`, `$GNRMC`, `$GNGST`) to extract latitude, longitude, altitude, ellipsoid height, HDOP/VDOP/PDOP, satellite count, and horizontal/vertical standard deviation.
-- Bi-directional communication: Transmits RTCM 3.x correction frames directly to the connected receiver over BLE.
+### 📡 1. BLE RTK Receiver Integration & MTU Optimization
+- **Nordic UART Service (NUS)**: Connects to external Bluetooth Low Energy GNSS receivers (u-blox, Unicore, Septentrio, etc.).
+- **Optimized MTU (517 Bytes / 512B Payload)**: Automatically negotiates maximum BLE ATT MTU size and sets `CONNECTION_PRIORITY_HIGH` (11.25ms–15ms interval) for unfragmented, low-latency RTCM correction delivery.
+- **NMEA Parser**: Continuously parses `$GNGGA`, `$GNRMC`, `$GNGST`, and `$GNGSA` for coordinates, DOPs, satellites, and precision standard deviations ($\sigma_{\text{lat}}, \sigma_{\text{lon}}, \sigma_{\text{alt}}$).
+- **Bi-Directional Communication**: Streams differential RTCM 3.x correction frames directly to the receiver over BLE.
 
-### ?? 2. NTRIP 2.0 Caster Bridge
+### 🌐 2. NTRIP 2.0 Caster Bridge & Sourcetable Browser
 - High-performance NTRIP Client supporting CORS networks (Default: `rtk.geodnet.com:2101`).
-- **NTRIP Credentials Persistence**: Automatically stores Host, Port, Mountpoint, Username, Password, and GGA dispatch preferences across sessions.
-- **Smart Phone Location GGA Fallback**: Automatically updates the NTRIP Caster with the Phone's location if no BLE RTK receiver is connected, ensuring immediate connection initialization.
-- **GNSS Ephemeris Filtering**: Optional toggle to filter out heavy satellite ephemeris frames (`1019`, `1020`, `1041-1046`) before sending RTCM data over BLE, saving serial bandwidth for low-power rovers.
+- **Live NTRIP Sourcetable Pulling**: Query and browse available mountpoints, formats (`RTCM 3.3`), constellations (`GPS+GLO+GAL+BDS`), and NMEA requirements directly from any caster.
+- **NTRIP Profile Manager**: Manage, save, and switch named connection profiles across multiple casters.
+- **Smart Phone Location Fallback**: Automatically initializes caster connection with phone GPS fix when no BLE RTK receiver is connected.
+- **GNSS Ephemeris Filtering**: Optional toggle to filter out heavy satellite ephemeris frames (`1019`, `1020`, `1041-1046`) before forwarding over BLE.
 
-### ?? 3. RTCM 3.x Inspector & Latency Engine
+### 🛰️ 3. GEODNET Base Station Discovery & "Switch Base" Coordination
+- **Proximity Discovery**: Discovers up to 20 active GEODNET base stations within a 100 km radius.
+- **Real-Time Baseline & Azimuth**: Displays baseline distance, azimuth degrees, and cardinal bearings to each base station.
+- **"Switch Base" Rerouting**: 1-tap base switching that updates reference coordinates and immediately reroutes the caster's differential stream.
+
+### ⏱️ 4. RTCM 3.x Inspector & Latency Engine
 - Real-time decoding of RTCM 3.x message types:
   - **Base Station ARP**: `1005` / `1006`
   - **MSM Observation Frames**: `107X` (GPS), `108X` (GLONASS), `109X` (Galileo), `110X` (QZSS), `111X` (SBAS), `112X` (BeiDou), `113X` (NavIC)
   - **Auxiliary Frames**: `1033` (Antenna/Receiver Descriptor), `1230` (GLONASS Code-Phase Biases), `1019-1046` (Satellite Ephemerides)
-- **Sub-Millisecond Epoch Span & Latency Engine**: Calculates first message latency, last message latency, and sub-millisecond transmission epoch duration ($\Delta t_{\text{epoch}} = t_{\text{last}} - t_{\text{first}}$) with 20-bit MSM TOW modulo matching and clock-skew tolerance.
-- Custom ordered breakdown chips matching professional surveyor standards.
+- **Epoch Latency Engine**: Calculates epoch duration, first message latency, last message latency, and differential age.
 
-### ??? 4. Offline Leaflet Map & Persistent Trajectory Tracking
-- Embedded Leaflet map loaded completely offline via bundled asset files (`map.html`, `leaflet.js`, `leaflet.css`).
-- High-contrast **Green Triangle** symbol for Base Station ARP.
-- **Base Station & Baseline Vector Toggle**:
-  - *Default Mode (OFF)*: Hides Base Station, auto-centers & zooms on Rover.
-  - *Base Mode (ON)*: Renders Base Station, draws baseline vector, shows baseline distance in km, and zooms out to fit both Rover and Base with manual pan enabled.
-- **Persistent Trajectory Storage**: Retains trajectory track points in a background service buffer across tab navigation, screen rotation, and page reloads.
-- **Static segment auto-detection**: automatically detection the static segments using spatial grouping given a distance cutoff (default 5cm changes) and time duration (default >5s), save the mean and std, start time and end time, number of epochs.
- 
+### 🗺️ 5. Offline Leaflet Map & Survey HUD
+- **Offline Leaflet Map**: Embedded satellite and street basemaps with persistent layer selection across sessions.
+- **Point-Based Trajectory Tracking**: Renders discrete survey track points color-coded by RTK fix quality (Green: RTK Fix, Amber: RTK Float, Blue: DGPS, Pink: Single).
+- **Survey HUD Banner**: Displays real-time Baseline Length [km], Base Data Latency [s], Satellites, RMS horizontal/vertical accuracy, and Base ID.
+- **Static Segment Auto-Detection**: Automatically detects static survey stops using spatial clustering (>5s duration, <5cm movement).
 
-### ?? 5. Android Mock Location & SW Maps TCP Server
-- **Android Mock Location Provider**: Injects sub-centimeter RTK fixes directly into the Android OS (`LocationManager`) so all Android apps (Google Maps, OsmAnd, Surveying tools) use the high-precision fix.
-- **NMEA TCP Server**: Broadcasts raw NMEA streams over a local TCP socket (`127.0.0.1:10110`) for direct integration with GIS surveying apps like SW Maps.
-- **RTCM TCP Server**: Broadcasts raw NMEA streams over a local TCP socket (`127.0.0.1:10120`) for direct integration with GIS surveying apps like SW Maps.
+### 📲 6. Android Mock Location & Local GIS TCP Servers
+- **Android Mock Location Provider**: Injects high-precision RTK fixes directly into the Android OS (`LocationManager`) for third-party mapping and surveying apps.
+- **NMEA TCP Server**: Broadcasts NMEA sentences on port `10110` (e.g. for SW Maps).
+- **RTCM TCP Server**: Broadcasts raw RTCM stream on port `10120`.
 
-### ?? 6. Dual Data Logger (Raw Binary & Android GNSS Raw)
+### 💾 7. Dual Data Logger (Raw Binary & Android GNSS Raw)
 1. **Raw Binary Stream Logger**:
-   - Logs `$GEOD` (NTRIP RTCM) and (BLE Receiver NMEA/Raw) streams in raw binary format.
-   - Folder structure: `logs/yyyy-MM-dd/` (Calculated in **GPS Time**).
-   - Filename format: `yyyy-MM-dd-HH-mm-ss-<mountpoint>-base.log` and `yyyy-MM-dd-HH-mm-ss-<roverId>-rove.log`.
-2. **Android GNSS Raw Measurement, Ephemeris and IMU Logger**:
-   - Captures raw pseudorange, carrier phase, Doppler, C/$N_0$, accumulated delta range (ADR), hardware clock drift, and satellite navigation subframes (ephemerides).
-   - Output format compatible with **Google GNSS Analysis Tool**, **RTKLIB**, and **RINEX Converters** (`yyyy-MM-dd-HH-mm-ss-raw-gnss.txt`).
-
-3. **save the auto-detected segments**:
+   - Structured `$GEOD,<timestampMs>,<payloadLength>,<binaryPayloadBytes>\r\n` framing for Base (`base.log`) and Rover (`rove.log`) streams.
+   - Organized in GPS-time directories (`logs/yyyy-MM-dd/`).
+2. **Android GNSS Raw Measurement Logger**:
+   - Captures raw pseudoranges, carrier phase, Doppler, $C/N_0$, and navigation messages in standard RINEX/RTKLIB format (`*-raw-gnss.txt`).
