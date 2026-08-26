@@ -34,7 +34,7 @@ object NmeaParser {
 
         return try {
             when (type) {
-                "GGA" -> parseGga(fields)
+                "GGA" -> parseGga(fields, line)
                 "RMC" -> parseRmc(fields)
                 "GST" -> parseGst(fields)
                 "GSA" -> parseGsa(fields)
@@ -65,7 +65,7 @@ object NmeaParser {
 
     private fun field(fields: List<String>, i: Int): String = fields.getOrElse(i) { "" }
 
-    private fun parseGga(f: List<String>): NmeaSentence.Gga? {
+    private fun parseGga(f: List<String>, rawLine: String = ""): NmeaSentence.Gga? {
         if (field(f, 2).isEmpty() || field(f, 4).isEmpty()) return null
         return NmeaSentence.Gga(
             utcTime = field(f, 1),
@@ -78,6 +78,7 @@ object NmeaParser {
             geoidSeparationM = field(f, 11).toDoubleOrNull() ?: 0.0,
             diffAgeSec = field(f, 13).toDoubleOrNull() ?: 0.0,
             diffStationId = field(f, 14).toIntOrNull() ?: 0,
+            rawSentence = rawLine.trim(),
         )
     }
 

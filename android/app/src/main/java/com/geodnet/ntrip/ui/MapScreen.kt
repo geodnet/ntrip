@@ -63,6 +63,8 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.geodnet.ntrip.ble.NmeaSentence
 import com.geodnet.ntrip.data.GeodnetCoverageRepository
+import com.geodnet.ntrip.data.GeodnetDatumInfo
+import com.geodnet.ntrip.data.GeodnetDatumResolver
 import com.geodnet.ntrip.data.NearbyStation
 import com.geodnet.ntrip.location.PositionFix
 import com.geodnet.ntrip.location.StaticSegment
@@ -220,6 +222,37 @@ fun MapScreen(viewModel: NtripViewModel) {
     val epochStats by viewModel.epochStats.collectAsState()
     val bleState by viewModel.bleConnectionState.collectAsState()
 
+    val datumInfo = remember(config.mountpoint, config.host, bestFix?.latitude, bestFix?.longitude) {
+        GeodnetDatumResolver.resolve(
+            mountpoint = config.mountpoint,
+            host = config.host,
+            lat = bestFix?.latitude,
+            lon = bestFix?.longitude
+        )
+    }
+
+    val mapRover = remember(bestFix, datumInfo.name) {
+        bestFix?.let { fix ->
+            if (fix.latitude != 0.0 || fix.longitude != 0.0) {
+                val pt = com.geodnet.ntrip.data.CoordinateTransform.transformForMapDisplay(
+                    fix.latitude, fix.longitude, fix.altitudeM, datumInfo.name
+                )
+                fix.copy(latitude = pt.latDeg, longitude = pt.lonDeg, altitudeM = pt.heightM)
+            } else fix
+        }
+    }
+
+    val mapBase = remember(baseStation, datumInfo.name) {
+        baseStation?.let { base ->
+            if (base.latDeg != 0.0 || base.lonDeg != 0.0) {
+                val pt = com.geodnet.ntrip.data.CoordinateTransform.transformForMapDisplay(
+                    base.latDeg, base.lonDeg, base.altM, datumInfo.name
+                )
+                base.copy(latDeg = pt.latDeg, lonDeg = pt.lonDeg, altM = pt.heightM)
+            } else base
+        }
+    }
+
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
     var pageReady by remember { mutableStateOf(false) }
     var sentTrajectoryCount by remember { mutableStateOf(0) }
@@ -263,7 +296,8 @@ fun MapScreen(viewModel: NtripViewModel) {
                 gst = bleState.latestGst,
                 baseStation = baseStation,
                 config = config,
-                epochStats = epochStats
+                epochStats = epochStats,
+                datumInfo = datumInfo
             )
         }
 
@@ -374,40 +408,59 @@ fun MapScreen(viewModel: NtripViewModel) {
         }
 
         // 4. Bottom Track Stats & Clear HUD
+        val isDatumConverted = !datumInfo.name.startsWith("WGS84") &&
+                !datumInfo.name.startsWith("ITRF2020") &&
+                !datumInfo.name.startsWith("AUTO (Pending") &&
+                !datumInfo.name.startsWith("Broadcast")
+
         Surface(
             shape = RoundedCornerShape(12.dp),
-            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
-            tonalElevation = 4.dp,
+            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+            tonalElevation = 6.dp,
             border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             modifier = Modifier
                 .align(Alignment.BottomStart)
-                .padding(14.dp)
+                .padding(start = 14.dp, bottom = 14.dp)
         ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            Column(
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp)
             ) {
-                Text(
-                    "Track: ${trajectory.size} pts • Net: ${nearbyStations.size} bases • Static: ${staticSegments.size} segs",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.clickable {
-                        if (staticSegments.isNotEmpty()) showStaticDialog = true else showNearbyDialog = true
-                    }
-                )
-                if (trajectory.isNotEmpty()) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     Text(
-                        "Clear",
-                        style = MaterialTheme.typography.labelMedium,
+                        "Track: ${trajectory.size} pts • Net: ${nearbyStations.size} bases",
+                        style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(MaterialTheme.colorScheme.error.copy(alpha = 0.12f))
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                            .clickable { viewModel.clearTrajectory() }
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.clickable {
+                            if (staticSegments.isNotEmpty()) showStaticDialog = true else showNearbyDialog = true
+                        }
+                    )
+                    if (trajectory.isNotEmpty()) {
+                        Text(
+                            "Clear",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(MaterialTheme.colorScheme.error.copy(alpha = 0.14f))
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                .clickable { viewModel.clearTrajectory() }
+                        )
+                    }
+                }
+
+                if (isDatumConverted) {
+                    Text(
+                        text = "🌐 ${datumInfo.name} → WGS84",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontSize = 10.sp
                     )
                 }
             }
@@ -433,11 +486,12 @@ fun MapScreen(viewModel: NtripViewModel) {
             staticSegments = staticSegments,
             onDismiss = { showStaticDialog = false },
             onZoomToSegment = { lat, lng ->
-                webViewRef?.evaluateJavascript("window.zoomToStaticSegment($lat, $lng)", null)
+                val pt = com.geodnet.ntrip.data.CoordinateTransform.transformForMapDisplay(lat, lng, 0.0, datumInfo.name)
+                webViewRef?.evaluateJavascript("window.zoomToStaticSegment(${pt.latDeg}, ${pt.lonDeg})", null)
                 showStaticDialog = false
             },
             onZoomToAll = {
-                webViewRef?.evaluateJavascript("window.zoomToAllStaticSegments('${segmentsJson(staticSegments)}')", null)
+                webViewRef?.evaluateJavascript("window.zoomToAllStaticSegments('${segmentsJson(staticSegments, datumInfo.name)}')", null)
                 showStaticDialog = false
             }
         )
@@ -446,7 +500,7 @@ fun MapScreen(viewModel: NtripViewModel) {
     // Auto-zoom to current location (phone or RTK receiver) on tab switch / page load
     LaunchedEffect(pageReady) {
         if (pageReady) {
-            val fix = bestFix
+            val fix = mapRover
             if (fix != null && (fix.latitude != 0.0 || fix.longitude != 0.0)) {
                 webViewRef?.evaluateJavascript(
                     "setRover(${fix.latitude}, ${fix.longitude}, ${fix.altitudeM}, ${fix.fixQuality})",
@@ -468,17 +522,18 @@ fun MapScreen(viewModel: NtripViewModel) {
         if (pageReady) webViewRef?.evaluateJavascript("setNearbyStationsVisible($showNearbyStations)", null)
     }
 
-    LaunchedEffect(pageReady, nearbyStations, baseStation, epochStats, bestFix) {
+    val currentStationId = mapRover?.diffStationId ?: baseStation?.staId ?: epochStats.baseStationId
+    LaunchedEffect(pageReady, nearbyStations, mapBase, currentStationId) {
         if (pageReady) {
             webViewRef?.evaluateJavascript(
-                "setNearbyStations('${nearbyStationsJson(nearbyStations, baseStation, epochStats, bestFix?.diffStationId)}')",
+                "setNearbyStations('${nearbyStationsJson(nearbyStations, mapBase, null, currentStationId)}')",
                 null
             )
         }
     }
 
-    LaunchedEffect(pageReady, bestFix) {
-        val fix = bestFix
+    LaunchedEffect(pageReady, mapRover) {
+        val fix = mapRover
         if (pageReady && fix != null) {
             webViewRef?.evaluateJavascript(
                 "setRover(${fix.latitude}, ${fix.longitude}, ${fix.altitudeM}, ${fix.fixQuality})",
@@ -487,9 +542,9 @@ fun MapScreen(viewModel: NtripViewModel) {
         }
     }
 
-    LaunchedEffect(pageReady, baseStation) {
+    LaunchedEffect(pageReady, mapBase) {
         if (!pageReady) return@LaunchedEffect
-        val base = baseStation
+        val base = mapBase
         if (base != null) {
             webViewRef?.evaluateJavascript(
                 "setBase(${base.latDeg}, ${base.lonDeg}, ${base.altM}, ${base.staId}, ${base.baselineKm})",
@@ -500,21 +555,21 @@ fun MapScreen(viewModel: NtripViewModel) {
         }
     }
 
-    LaunchedEffect(pageReady, trajectory) {
+    LaunchedEffect(pageReady, trajectory, datumInfo.name) {
         if (!pageReady) return@LaunchedEffect
         if (trajectory.size < sentTrajectoryCount) sentTrajectoryCount = 0
         if (sentTrajectoryCount == 0) {
-            webViewRef?.evaluateJavascript("setTrajectory('${trajectoryJson(trajectory)}')", null)
+            webViewRef?.evaluateJavascript("setTrajectory('${trajectoryJson(trajectory, datumInfo.name)}')", null)
         } else if (trajectory.size > sentTrajectoryCount) {
             val newPoints = trajectory.subList(sentTrajectoryCount, trajectory.size)
-            webViewRef?.evaluateJavascript("appendTrajectoryPoints('${trajectoryJson(newPoints)}')", null)
+            webViewRef?.evaluateJavascript("appendTrajectoryPoints('${trajectoryJson(newPoints, datumInfo.name)}')", null)
         }
         sentTrajectoryCount = trajectory.size
     }
 
-    LaunchedEffect(pageReady, staticSegments) {
+    LaunchedEffect(pageReady, staticSegments, datumInfo.name) {
         if (pageReady) {
-            webViewRef?.evaluateJavascript("setStaticSegments('${segmentsJson(staticSegments)}')", null)
+            webViewRef?.evaluateJavascript("setStaticSegments('${segmentsJson(staticSegments, datumInfo.name)}')", null)
         }
     }
 }
@@ -528,7 +583,8 @@ private fun MapSurveyHud(
     gst: NmeaSentence.Gst?,
     baseStation: BaseStationFix?,
     config: NtripConfig,
-    epochStats: EpochLatencyStats
+    epochStats: EpochLatencyStats,
+    datumInfo: GeodnetDatumInfo? = null
 ) {
     val satellites = fix?.numSatellites
     val accuracyM = gst?.let { sqrt(it.latStdDevM * it.latStdDevM + it.lonStdDevM * it.lonStdDevM) }
@@ -657,23 +713,36 @@ private fun MapSurveyHud(
     }
 }
 
-private fun trajectoryJson(points: List<PositionFix>): String {
+private fun trajectoryJson(points: List<PositionFix>, datumName: String = ""): String {
     val arr = JSONArray()
-    for (p in points) arr.put(JSONArray(listOf(p.latitude, p.longitude, p.fixQuality)))
+    for (p in points) {
+        val pt = if (datumName.isNotBlank()) {
+            com.geodnet.ntrip.data.CoordinateTransform.transformForMapDisplay(p.latitude, p.longitude, p.altitudeM, datumName)
+        } else null
+        val lat = pt?.latDeg ?: p.latitude
+        val lon = pt?.lonDeg ?: p.longitude
+        arr.put(JSONArray(listOf(lat, lon, p.fixQuality)))
+    }
     return arr.toString()
 }
 
-private fun segmentsJson(segments: List<StaticSegment>): String {
+private fun segmentsJson(segments: List<StaticSegment>, datumName: String = ""): String {
     val arr = JSONArray()
     for (s in segments) {
+        val pt = if (datumName.isNotBlank()) {
+            com.geodnet.ntrip.data.CoordinateTransform.transformForMapDisplay(s.meanLatDeg, s.meanLonDeg, s.meanAltM, datumName)
+        } else null
+        val lat = pt?.latDeg ?: s.meanLatDeg
+        val lon = pt?.lonDeg ?: s.meanLonDeg
+        val alt = pt?.heightM ?: s.meanAltM
         arr.put(
             JSONArray(
                 listOf(
-                    s.meanLatDeg,
-                    s.meanLonDeg,
+                    lat,
+                    lon,
                     s.epochCount,
                     s.stdDev2dM,
-                    s.meanAltM,
+                    alt,
                     s.durationSec,
                     s.stdDevNorthM,
                     s.stdDevEastM,

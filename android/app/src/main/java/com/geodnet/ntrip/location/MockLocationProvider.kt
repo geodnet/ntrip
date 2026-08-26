@@ -71,12 +71,114 @@ class MockLocationProvider(context: Context) {
             longitude = fix.longitude
             altitude = fix.altitudeM
             accuracy = accuracyFor(fix)
-            time = System.currentTimeMillis()
+            time = if (fix.timestampMs > 0) fix.timestampMs else System.currentTimeMillis()
             elapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos()
+
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 verticalAccuracyMeters = accuracy
-                bearingAccuracyDegrees = 180f
-                speedAccuracyMetersPerSecond = 1f
+                bearingAccuracyDegrees = 360f
+                speedAccuracyMetersPerSecond = 5f
+            }
+
+            val fixTypeString = when (fix.fixQuality) {
+                4 -> "RTK FIXED"
+                5 -> "RTK FLOAT"
+                2 -> "DGPS"
+                1 -> "SINGLE"
+                else -> "NONE"
+            }
+            val fixTypeShort = when (fix.fixQuality) {
+                4 -> "RTK"
+                5 -> "FLOAT"
+                2 -> "DGPS"
+                1 -> "SINGLE"
+                else -> "NONE"
+            }
+            val fixTypeDisplay = when (fix.fixQuality) {
+                4 -> "RTK Fix"
+                5 -> "RTK Float"
+                2 -> "DGPS"
+                1 -> "Single"
+                else -> "No Fix"
+            }
+
+            val ggaLine = fix.rawNmeaGga.ifBlank {
+                com.geodnet.ntrip.ntrip.GgaGenerator.generate(
+                    latitude = fix.latitude,
+                    longitude = fix.longitude,
+                    altitude = fix.altitudeM,
+                    numSatellites = fix.numSatellites,
+                    hdop = fix.hdop,
+                    staId = fix.diffStationId,
+                    age = fix.diffAgeSec
+                )
+            }
+
+            extras = android.os.Bundle().apply {
+                // Satellites (int & string variants used across SW Maps / Lefebure / QField)
+                putInt("satellites", fix.numSatellites)
+                putInt("Satellites", fix.numSatellites)
+                putInt("satellites_in_use", fix.numSatellites)
+                putInt("satellites_in_view", fix.numSatellites)
+                putInt("satellitesUsed", fix.numSatellites)
+                putInt("satellitesVisible", fix.numSatellites)
+                putInt("num_satellites", fix.numSatellites)
+                putInt("numSatellites", fix.numSatellites)
+                putInt("sv_used", fix.numSatellites)
+                putInt("svs", fix.numSatellites)
+                putInt("SATS", fix.numSatellites)
+                putString("satellites_str", fix.numSatellites.toString())
+
+                // Fix Quality / Status / Type (int & string variants)
+                putInt("fixType", fix.fixQuality)
+                putInt("FixType", fix.fixQuality)
+                putInt("fix_type", fix.fixQuality)
+                putInt("quality", fix.fixQuality)
+                putInt("Quality", fix.fixQuality)
+                putString("fix_type_str", fixTypeString)
+                putString("fixType_str", fixTypeString)
+                putString("FixType_str", fixTypeString)
+                putString("status", fixTypeDisplay)
+                putString("Status", fixTypeDisplay)
+                putString("rtk_status", if (fix.fixQuality == 4) "FIXED" else if (fix.fixQuality == 5) "FLOAT" else "NONE")
+                putString("rtk", if (fix.fixQuality == 4) "Fix" else if (fix.fixQuality == 5) "Float" else "None")
+                putString("mode", fixTypeShort)
+                putString("position_type", if (fix.fixQuality == 4) "RTK_FIXED" else if (fix.fixQuality == 5) "RTK_FLOAT" else "SINGLE")
+                putBoolean("is_rtk", fix.fixQuality == 4 || fix.fixQuality == 5)
+                putBoolean("is_rtk_fixed", fix.fixQuality == 4)
+
+                // Differential Age & Station ID
+                putFloat("diffAge", fix.diffAgeSec.toFloat())
+                putFloat("diff_age", fix.diffAgeSec.toFloat())
+                putFloat("age", fix.diffAgeSec.toFloat())
+                putFloat("Age", fix.diffAgeSec.toFloat())
+                putFloat("age_of_diff", fix.diffAgeSec.toFloat())
+                putInt("diffStationId", fix.diffStationId)
+                putInt("diff_station_id", fix.diffStationId)
+                putInt("station_id", fix.diffStationId)
+                putInt("stationId", fix.diffStationId)
+                putInt("base_station_id", fix.diffStationId)
+
+                // DOPs & Accuracies
+                putFloat("hdop", fix.hdop.toFloat())
+                putFloat("HDOP", fix.hdop.toFloat())
+                putFloat("accuracy", accuracy)
+                putFloat("hAcc", accuracy)
+                putFloat("vAcc", accuracy)
+                putFloat("rms", accuracy)
+
+                // Geoid Separation & Altitudes
+                putFloat("geoid_height", fix.geoidSeparationM.toFloat())
+                putFloat("geoidSeparation", fix.geoidSeparationM.toFloat())
+                putFloat("undulation", fix.geoidSeparationM.toFloat())
+                putDouble("msl_altitude", fix.altitudeM)
+
+                // Raw NMEA String (for SW Maps and GIS apps with NMEA string parsers)
+                putString("NMEA", ggaLine)
+                putString("nmea", ggaLine)
+                putString("raw_nmea", ggaLine)
+                putString("GGA", ggaLine)
+                putString("gga", ggaLine)
             }
         }
 
@@ -131,6 +233,12 @@ class MockLocationProvider(context: Context) {
     }
 
     companion object {
-        private val PROVIDERS = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
+        private val PROVIDERS = buildList {
+            add(LocationManager.GPS_PROVIDER)
+            add(LocationManager.NETWORK_PROVIDER)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                add("fused")
+            }
+        }
     }
 }

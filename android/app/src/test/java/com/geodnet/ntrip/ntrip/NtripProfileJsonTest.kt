@@ -62,4 +62,13 @@ class NtripProfileJsonTest {
         assertEquals(1, parsed.size)
         assertEquals(defaults, parsed[0].config)
     }
+
+    @Test
+    fun `handles profiles with special characters and whitespace in name`() {
+        val profile = NtripProfile(id = "x", name = "Test \"Special\" & Name", config = sampleConfig)
+        val json = NtripProfileJson.serialize(listOf(profile))
+        val parsed = NtripProfileJson.parse(json)
+        assertEquals(1, parsed.size)
+        assertEquals("Test \"Special\" & Name", parsed[0].name)
+    }
 }

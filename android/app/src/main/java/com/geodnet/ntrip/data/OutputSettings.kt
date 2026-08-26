@@ -19,4 +19,6 @@ data class OutputSettings(
     val rawLoggingEnabled: Boolean = true,
     /** Android GNSS Raw Measurement/Ephemeris/IMU Logger (readme.md section 6.2). On by default. */
     val gnssRawLoggingEnabled: Boolean = true,
+    /** RTK Audio Beep/Tone Alerts for fix state transitions (first fix, refix, lost fix, entering/exiting RTK). On by default. */
+    val soundAlertsEnabled: Boolean = true,
 )

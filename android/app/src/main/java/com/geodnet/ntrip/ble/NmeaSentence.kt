@@ -17,6 +17,7 @@ sealed class NmeaSentence {
         /** Differential reference station ID (field 14) -- 0 if absent. Many receivers report 0
          * here even with a valid differential fix, so treat 0 as "unknown", not "station #0". */
         val diffStationId: Int = 0,
+        val rawSentence: String = "",
     ) : NmeaSentence()
 
     data class Rmc(

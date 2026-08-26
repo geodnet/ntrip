@@ -59,6 +59,10 @@
     70% { transform: scale(1.6); opacity: 0.15; }
     100% { transform: scale(1.8); opacity: 0; }
   }
+  .leaflet-bottom.leaflet-right {
+    margin-bottom: 14px !important;
+    margin-right: 14px !important;
+  }
 </style>
 </head>
 <body>
@@ -78,11 +82,11 @@
 
   var savedBaseMap = (function() {
     try { return localStorage.getItem('geodnet_basemap'); } catch(e) { return null; }
-  })() || 'Satellite';
-  var initialLayer = savedBaseMap === 'Streets' ? streets : satellite;
+  })() || 'Streets';
+  var initialLayer = savedBaseMap === 'Satellite' ? satellite : streets;
 
   var map = L.map('map', { zoomControl: false, attributionControl: false, layers: [initialLayer] }).setView([0, 0], 2);
-  L.control.layers({ 'Satellite': satellite, 'Streets': streets }, null, { position: 'bottomright', collapsed: true }).addTo(map);
+  L.control.layers({ 'Streets': streets, 'Satellite': satellite }, null, { position: 'bottomright', collapsed: true }).addTo(map);
 
   map.on('baselayerchange', function (e) {
     if (e.name) {

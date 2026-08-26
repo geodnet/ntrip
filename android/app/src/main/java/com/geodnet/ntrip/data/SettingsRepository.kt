@@ -41,6 +41,20 @@ class SettingsRepository(private val context: Context) {
         val FILTER_EPHEMERIS_FOR_BLE = booleanPreferencesKey("filter_ephemeris_for_ble")
         val RAW_LOGGING_ENABLED = booleanPreferencesKey("raw_logging_enabled")
         val GNSS_RAW_LOGGING_ENABLED = booleanPreferencesKey("gnss_raw_logging_enabled")
+        val SOUND_ALERTS_ENABLED = booleanPreferencesKey("sound_alerts_enabled")
+        val LAST_BLE_NAME = stringPreferencesKey("last_ble_name")
+        val LAST_BLE_ADDRESS = stringPreferencesKey("last_ble_address")
+    }
+
+    val lastBleDeviceFlow: Flow<Pair<String?, String?>> = context.dataStore.data.map { prefs ->
+        Pair(prefs[Keys.LAST_BLE_NAME], prefs[Keys.LAST_BLE_ADDRESS])
+    }
+
+    suspend fun saveLastBleDevice(name: String?, address: String) {
+        context.dataStore.edit { prefs ->
+            if (name != null) prefs[Keys.LAST_BLE_NAME] = name
+            prefs[Keys.LAST_BLE_ADDRESS] = address
+        }
     }
 
     val configFlow: Flow<NtripConfig> = context.dataStore.data.map { prefs ->
@@ -83,6 +97,7 @@ class SettingsRepository(private val context: Context) {
             filterEphemerisForBle = prefs[Keys.FILTER_EPHEMERIS_FOR_BLE] ?: true,
             rawLoggingEnabled = prefs[Keys.RAW_LOGGING_ENABLED] ?: true,
             gnssRawLoggingEnabled = prefs[Keys.GNSS_RAW_LOGGING_ENABLED] ?: true,
+            soundAlertsEnabled = prefs[Keys.SOUND_ALERTS_ENABLED] ?: true,
         )
     }
 
@@ -112,5 +127,9 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun saveGnssRawLoggingEnabled(enabled: Boolean) {
         context.dataStore.edit { it[Keys.GNSS_RAW_LOGGING_ENABLED] = enabled }
+    }
+
+    suspend fun saveSoundAlertsEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.SOUND_ALERTS_ENABLED] = enabled }
     }
 }

@@ -78,6 +78,7 @@ class LocationFixAggregator(private val context: Context) {
             diffAgeSec = sentence.diffAgeSec,
             diffStationId = sentence.diffStationId,
             geoidSeparationM = sentence.geoidSeparationM,
+            rawNmeaGga = sentence.rawSentence,
         )
     }
 
@@ -128,18 +129,25 @@ class LocationFixAggregator(private val context: Context) {
 
     private fun onPhoneLocation(location: Location) {
         if (bleConnected) return
+        val rawSats = if (location.extras?.containsKey("satellites") == true) {
+            location.extras!!.getInt("satellites")
+        } else {
+            0
+        }
+        val satellites = if (rawSats > 0) rawSats else DEFAULT_PHONE_SATELLITES
+        val hdop = if (location.hasAccuracy() && location.accuracy > 0f) {
+            (location.accuracy / 4.0).coerceIn(0.8, 2.5)
+        } else {
+            1.0
+        }
         val fix = PositionFix(
             source = FixSource.PHONE,
             latitude = location.latitude,
             longitude = location.longitude,
             altitudeM = location.altitude,
             fixQuality = 1,
-            numSatellites = if (location.extras?.containsKey("satellites") == true) {
-                location.extras!!.getInt("satellites")
-            } else {
-                0
-            },
-            hdop = 0.0,
+            numSatellites = satellites,
+            hdop = hdop,
             timestampMs = location.time,
         )
         _fix.value = fix
@@ -150,5 +158,6 @@ class LocationFixAggregator(private val context: Context) {
 
     companion object {
         private const val PHONE_UPDATE_INTERVAL_MS = 1000L
+        private const val DEFAULT_PHONE_SATELLITES = 12
     }
 }

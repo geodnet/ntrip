@@ -24,6 +24,7 @@ import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.net.SocketTimeoutException
 import java.util.Base64
 
 /**
@@ -72,6 +73,9 @@ class NtripClient(
         try {
             withContext(Dispatchers.IO) {
                 socket = Socket().apply {
+                    tcpNoDelay = true
+                    keepAlive = true
+                    soTimeout = SOCKET_READ_TIMEOUT_MS
                     connect(InetSocketAddress(config.host, config.port), CONNECT_TIMEOUT_MS)
                 }
                 sendRequest()
@@ -96,6 +100,13 @@ class NtripClient(
             }
         } catch (e: CancellationException) {
             throw e
+        } catch (e: SocketTimeoutException) {
+            _state.update {
+                it.copy(
+                    status = NtripStatus.ERROR,
+                    errorMessage = "Stream data timeout (no data for ${SOCKET_READ_TIMEOUT_MS / 1000}s)"
+                )
+            }
         } catch (e: IOException) {
             _state.update { it.copy(status = NtripStatus.ERROR, errorMessage = e.message ?: "Connection error") }
         } finally {
@@ -134,9 +145,7 @@ class NtripClient(
     }
 
     private suspend fun sendGga() = withContext(Dispatchers.IO) {
-        val cleanMount = config.mountpoint.trim().removePrefix("/").ifBlank { "AUTO" }
-        val isAutoMountpoint = cleanMount.startsWith("AUTO", ignoreCase = true)
-        val live = if (isAutoMountpoint && config.useLiveLocation) livePosition?.invoke() else null
+        val live = if (config.useLiveLocation) livePosition?.invoke() else null
         val sentence = (
             if (live != null) {
                 GgaGenerator.generate(live.latitude, live.longitude, live.altitudeM, live.numSatellites, live.hdop)
@@ -150,7 +159,8 @@ class NtripClient(
                 flush()
             }
         } catch (_: IOException) {
-            // let readLoop observe the same failure and report it
+            // Output stream broken; close socket so readLoop terminates and triggers auto-reconnect
+            closeSocket()
         }
     }
 
@@ -195,5 +205,6 @@ class NtripClient(
     companion object {
         private const val USER_AGENT = "ntrip client Android/0.1.0"
         private const val CONNECT_TIMEOUT_MS = 10_000
+        private const val SOCKET_READ_TIMEOUT_MS = 15_000
     }
 }

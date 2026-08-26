@@ -83,6 +83,12 @@ class NtripViewModel(app: Application) : AndroidViewModel(app) {
     val bleIsScanning: StateFlow<Boolean> = bleScanner.isScanning
     val bleConnectionState: StateFlow<BleConnectionState> = bleReceiver.state
 
+    private val _lastBleName = MutableStateFlow<String?>(null)
+    val lastBleName: StateFlow<String?> = _lastBleName.asStateFlow()
+
+    private val _lastBleAddress = MutableStateFlow<String?>(null)
+    val lastBleAddress: StateFlow<String?> = _lastBleAddress.asStateFlow()
+
     private val _bestFix = MutableStateFlow<PositionFix?>(null)
     val bestFix: StateFlow<PositionFix?> = _bestFix.asStateFlow()
 
@@ -113,6 +119,9 @@ class NtripViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _filterEphemerisForBle = MutableStateFlow(true)
     val filterEphemerisForBle: StateFlow<Boolean> = _filterEphemerisForBle.asStateFlow()
+
+    private val _soundAlertsEnabled = MutableStateFlow(true)
+    val soundAlertsEnabled: StateFlow<Boolean> = _soundAlertsEnabled.asStateFlow()
 
     private val coverageRepository = GeodnetCoverageRepository(app)
 
@@ -219,6 +228,12 @@ class NtripViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             profileRepository.selectedProfileIdFlow.collect { _selectedProfileId.value = it }
         }
+        viewModelScope.launch {
+            settingsRepository.lastBleDeviceFlow.collect { (name, addr) ->
+                _lastBleName.value = name
+                _lastBleAddress.value = addr
+            }
+        }
         // Bridge BLE receiver events into the (Activity-independent) foreground service, which
         // owns the mock-location/NMEA-server "best fix" aggregation -- see android/CLAUDE.md's
         // note on the BLE receiver being ViewModel-scoped rather than service-hosted.
@@ -226,6 +241,9 @@ class NtripViewModel(app: Application) : AndroidViewModel(app) {
             bleReceiver.state.collect { state ->
                 service?.onBleConnectionChanged(state.status == BleStatus.CONNECTED, state.deviceAddress, state.deviceName)
                 state.latestFix?.let { service?.onBleFix(it) }
+                if (state.status == BleStatus.CONNECTED && state.deviceAddress != null) {
+                    settingsRepository.saveLastBleDevice(state.deviceName, state.deviceAddress)
+                }
             }
         }
         viewModelScope.launch {
@@ -252,6 +270,7 @@ class NtripViewModel(app: Application) : AndroidViewModel(app) {
             settingsRepository.outputSettingsFlow.collect {
                 _showBaseStation.value = it.showBaseStation
                 _filterEphemerisForBle.value = it.filterEphemerisForBle
+                _soundAlertsEnabled.value = it.soundAlertsEnabled
             }
         }
         viewModelScope.launch {
@@ -288,6 +307,7 @@ class NtripViewModel(app: Application) : AndroidViewModel(app) {
         svc.setRtcmServerEnabled(settings.rtcmServerEnabled)
         svc.setRawLoggingEnabled(settings.rawLoggingEnabled)
         svc.setGnssRawLoggingEnabled(settings.gnssRawLoggingEnabled)
+        svc.setSoundAlertsEnabled(settings.soundAlertsEnabled)
     }
 
     fun setMockLocationEnabled(enabled: Boolean) {
@@ -315,6 +335,12 @@ class NtripViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { settingsRepository.saveFilterEphemerisForBle(enabled) }
     }
 
+    fun setSoundAlertsEnabled(enabled: Boolean) {
+        _soundAlertsEnabled.value = enabled
+        service?.setSoundAlertsEnabled(enabled)
+        viewModelScope.launch { settingsRepository.saveSoundAlertsEnabled(enabled) }
+    }
+
     fun setRawLoggingEnabled(enabled: Boolean) {
         service?.setRawLoggingEnabled(enabled)
         viewModelScope.launch { settingsRepository.saveRawLoggingEnabled(enabled) }
@@ -339,19 +365,31 @@ class NtripViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { profileRepository.setSelectedProfileId(profile.id) }
     }
 
-    /** Saves [config] as a brand-new profile named [name] (selecting it), independent of whatever
-     * profile (if any) was previously selected. */
+    /** Generates a non-colliding default profile name like "Profile 1", "Profile 2", etc. */
+    fun generateUniqueProfileName(base: String = "Profile"): String {
+        val existingNames = _profiles.value.map { it.name.trim().lowercase() }.toSet()
+        var index = 1
+        while (existingNames.contains("${base.lowercase()} $index") || existingNames.contains("${base.lowercase()}-$index")) {
+            index++
+        }
+        return "$base $index"
+    }
+
+    /** Saves [config] as a profile named [name] (or generates a unique name if blank).
+     * If a profile with this exact name already exists, it updates that record to guarantee uniqueness. */
     fun saveAsNewProfile(name: String, config: NtripConfig) {
+        val trimmed = name.trim().ifBlank { generateUniqueProfileName() }
         updateConfig(config)
-        viewModelScope.launch { profileRepository.addProfile(name, config) }
+        viewModelScope.launch { profileRepository.addProfile(trimmed, config) }
     }
 
     /** Overwrites the currently-selected profile's name/config with [name]/[config]. No-ops if no
      * profile is selected -- the UI only enables this action when one is. */
     fun updateSelectedProfile(name: String, config: NtripConfig) {
         val id = _selectedProfileId.value ?: return
+        val trimmed = name.trim().ifBlank { "Profile" }
         updateConfig(config)
-        viewModelScope.launch { profileRepository.updateProfile(id, name, config) }
+        viewModelScope.launch { profileRepository.updateProfile(id, trimmed, config) }
     }
 
     fun deleteProfile(id: String) {
@@ -384,7 +422,12 @@ class NtripViewModel(app: Application) : AndroidViewModel(app) {
 
     fun connectBleDevice(address: String) {
         stopBleScan()
-        val device = bleScanner.getDevice(address) ?: return
+        val device = bleScanner.getDevice(address)
+            ?: try {
+                val bluetoothManager = getApplication<Application>().getSystemService(android.bluetooth.BluetoothManager::class.java)
+                bluetoothManager?.adapter?.getRemoteDevice(address)
+            } catch (_: Exception) { null }
+            ?: return
         bleReceiver.connect(device)
     }
 
@@ -435,13 +478,28 @@ class NtripViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    private var lastNearbyCheckLat: Double? = null
+    private var lastNearbyCheckLon: Double? = null
+
     private fun updateNearbyStations(lat: Double, lon: Double) {
-        _nearbyStations.value = coverageRepository.findNearbyStations(
-            userLat = lat,
-            userLon = lon,
-            maxRadiusKm = 100.0,
-            limit = 20
-        )
+        if (lat == 0.0 && lon == 0.0) return
+        val lastLat = lastNearbyCheckLat
+        val lastLon = lastNearbyCheckLon
+        if (lastLat != null && lastLon != null && _nearbyStations.value.isNotEmpty()) {
+            val dist = GeodnetCoverageRepository.haversineDistanceKm(lat, lon, lastLat, lastLon)
+            if (dist < 1.0) return
+        }
+        lastNearbyCheckLat = lat
+        lastNearbyCheckLon = lon
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+            val list = coverageRepository.findNearbyStations(
+                userLat = lat,
+                userLon = lon,
+                maxRadiusKm = 100.0,
+                limit = 20
+            )
+            _nearbyStations.value = list
+        }
     }
 
     fun setShowNearbyStations(enabled: Boolean) {

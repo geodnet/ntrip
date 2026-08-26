@@ -23,4 +23,5 @@ data class PositionFix(
      * unreported; many receivers report 0 even with a valid fix, so treat 0 as "unknown". */
     val diffStationId: Int = 0,
     val geoidSeparationM: Double = 0.0,
+    val rawNmeaGga: String = "",
 )

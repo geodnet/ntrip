@@ -59,19 +59,29 @@ saveable connection profiles instead (add/load/update/delete) — see `CLAUDE.md
   - **Auxiliary Frames**: `1033` (Antenna/Receiver Descriptor), `1230` (GLONASS Code-Phase Biases), `1019-1046` (Satellite Ephemerides)
 - **Epoch Latency Engine**: Calculates epoch duration, first message latency, last message latency, and differential age.
 
-### 🗺️ 5. Offline Leaflet Map & Survey HUD
+### 🗺️ 5. Offline Leaflet Map, Survey HUD & Coordinate Datum Transformation
 - **Offline Leaflet Map**: Embedded satellite and street basemaps with persistent layer selection across sessions.
+- **Tectonic Plate Coordinate Transformation (14-Parameter Time-Dependent Helmert)**: Ported from standard geodetic transformation engines (`coord.c`/`coord.h`). Automatically converts regional coordinates under `AUTO` (USA `NAD83(2011)/PA11/MA11`, Europe `ETRS89/ETRF2000`, Australia `GDA2020/GDA94`, New Zealand `NZGD2000`, South America `SIRGAS2000`, South Africa `ITRF1991`, Asia `ITRF2014/ITRF2008/CGCS2000/TUREF`) back to global **WGS84 / ITRF2020(2020.0)** for centimeter-accurate alignment on Google/ESRI/OSM tiles.
 - **Interactive Gestures & Auto-Zoom**: Auto-zooms to rover on launch and smoothly pauses auto-zoom/following during manual pan/zoom gestures (with 1-tap re-center FAB).
 - **Point-Based Trajectory Tracking**: Renders discrete survey track points color-coded by RTK fix quality (Green: RTK Fix, Amber: RTK Float, Blue: DGPS, Pink: Single).
-- **Survey HUD Banner**: Displays real-time Baseline Length [km], Base Data Latency [s], Satellites, RMS horizontal/vertical accuracy, and Base ID.
+- **Survey HUD Banner**: Displays real-time Baseline Length [km], Base Data Latency [s], Satellites, RMS horizontal/vertical accuracy, Base ID, and active datum transformation.
 - **Static Segment Auto-Detection**: Automatically detects static survey stops using 2D horizontal clustering (RTK-fixed only, >5s duration, 5cm tolerance, transient float dropout tolerance). Computes 9-decimal centroid coordinates, 4-decimal height, and full 4-decimal NEU standard deviations ($\sigma_N, \sigma_E, \sigma_U, \sigma_{2D}, \sigma_{3D}$) logged to timestamped CSV files.
 
-### 📲 6. Android Mock Location & Local GIS TCP Servers
-- **Android Mock Location Provider**: Injects high-precision RTK fixes directly into the Android OS (`LocationManager`) for third-party mapping and surveying apps.
-- **NMEA TCP Server**: Broadcasts NMEA sentences on port `10110` (e.g. for SW Maps).
+### 🔔 6. RTK Audio Beep Notifications
+- **Surveyor Audio Cues**: Low-latency synthesized PCM tone alerts with anti-pop envelope ramps for key RTK state transitions:
+  - **RTK First Fix**: Rising 3-tone chime ($1200\text{Hz} \to 1600\text{Hz} \to 2200\text{Hz}$).
+  - **RTK Refix**: 2-tone rising chime ($1700\text{Hz} \to 2300\text{Hz}$).
+  - **RTK Lost Fix**: Descending 2-tone warning ($950\text{Hz} \to 550\text{Hz}$).
+  - **Entering RTK**: Ascending blip ($1100\text{Hz} \to 1450\text{Hz}$).
+  - **Exiting RTK**: 2-buzz alarm ($420\text{Hz} \to 350\text{Hz}$).
+- Runs continuously in the background foreground service even with the screen off or when surveying in external GIS apps.
+
+### 📲 7. Android Mock Location & Local GIS TCP Servers
+- **Android Mock Location Provider**: Injects high-precision RTK fixes directly into the Android OS (`LocationManager`) with full `Location.extras` metadata (raw `$GNGGA`/`$GPGGA` string, satellite count, fix quality, differential age, HDOP, station ID) for seamless compatibility with SW Maps, QField, and Lefebure.
+- **NMEA TCP Server**: Broadcasts raw NMEA stream on port `10110` (e.g. for SW Maps native TCP Client mode).
 - **RTCM TCP Server**: Broadcasts raw RTCM stream on port `10120`.
 
-### 💾 7. Dual Data Logger (Raw Binary & Android GNSS Raw)
+### 💾 8. Dual Data Logger (Raw Binary & Android GNSS Raw)
 1. **Raw Binary Stream Logger**:
    - Structured `$GEOD,<timestampMs>,<payloadLength>,<binaryPayloadBytes>\r\n` framing for Base (`base.log`) and Rover (`rove.log`) streams.
    - Organized in GPS-time directories (`logs/yyyy-MM-dd/`).

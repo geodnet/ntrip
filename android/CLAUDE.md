@@ -465,9 +465,10 @@ their rationale. What's left is verification and polish, not missing features:
 - RTCM 1230 has no detail decoder, and the Latency Engine correlates epochs by arrival-time
   clustering rather than the readme's literal "20-bit MSM TOW modulo matching" — see Status above
   for why, in both cases.
-- Ntrip profiles: no duplicate-name validation (two profiles can share a name), no import/export,
-  and deleting the currently-selected profile clears `selectedProfileId` but leaves the working
-  config fields populated with whatever that profile had -- the form doesn't reset itself.
+- Ntrip profiles enforce strictly unique, case-insensitive names (`NtripProfileRepository.kt` updates
+  existing records on duplicate save or auto-generates non-colliding names), with inline duplicate
+  warnings in the UI. No external import/export yet, and deleting the currently-selected profile
+  clears `selectedProfileId` but leaves the working config fields populated with whatever that profile had.
 - The `NtripSettingsDialog` popup has no field-level validation (e.g. a non-numeric port just falls
   back to the previous numeric value silently via `toIntOrNull() ?: config.port`, same as before
   this was a dialog) and no confirmation before overwriting a profile via "Update".

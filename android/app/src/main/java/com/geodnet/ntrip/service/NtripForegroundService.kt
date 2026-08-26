@@ -177,10 +177,19 @@ class NtripForegroundService : Service() {
         fun getService(): NtripForegroundService = this@NtripForegroundService
     }
 
+    private val soundNotifier by lazy { com.geodnet.ntrip.audio.RtkSoundNotifier() }
+
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
         serviceScope.launch { locationAggregator.fix.collect { mockLocationProvider.update(it) } }
+        serviceScope.launch {
+            locationAggregator.fix.collect { fix ->
+                if (fix != null) {
+                    soundNotifier.onFixQualityChanged(fix.fixQuality)
+                }
+            }
+        }
         serviceScope.launch {
             locationAggregator.nmeaLine.collect { line ->
                 nmeaServer.broadcast((line + "\n").toByteArray(Charsets.US_ASCII))
@@ -223,6 +232,7 @@ class NtripForegroundService : Service() {
      * Raw Binary Stream Logger's roverId. */
     fun onBleConnectionChanged(connected: Boolean, deviceId: String? = null, deviceName: String? = null) {
         locationAggregator.onBleConnectionChanged(connected)
+        if (!connected) soundNotifier.reset()
         connectedBleId = if (connected) deviceId else null
         connectedBleName = if (connected) deviceName else null
         if (connected && rawLoggerState.value.active) {
@@ -245,6 +255,10 @@ class NtripForegroundService : Service() {
 
     fun setRtcmServerEnabled(enabled: Boolean) {
         if (enabled) rtcmServer.start(serviceScope) else rtcmServer.stop()
+    }
+
+    fun setSoundAlertsEnabled(enabled: Boolean) {
+        soundNotifier.isEnabled = enabled
     }
 
     override fun onBind(intent: Intent?): IBinder = binder
@@ -340,6 +354,7 @@ class NtripForegroundService : Service() {
         observeJob?.cancel()
         client = null
         _baseStation.value = null
+        soundNotifier.reset()
         _serviceState.value = NtripState(status = NtripStatus.DISCONNECTED)
         stopForeground(STOP_FOREGROUND_REMOVE)
     }

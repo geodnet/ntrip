@@ -37,28 +37,60 @@ class NtripProfileRepository(private val context: Context) {
     }
 
     val profilesFlow: Flow<List<NtripProfile>> = context.profilesDataStore.data.map { prefs ->
-        NtripProfileJson.parse(prefs[Keys.PROFILES_JSON])
+        val raw = NtripProfileJson.parse(prefs[Keys.PROFILES_JSON])
+        // Deduplicate legacy/imported lists: preserve the last occurrence for any duplicate name
+        val uniqueMap = mutableMapOf<String, NtripProfile>()
+        raw.forEach { p ->
+            val key = p.name.trim().lowercase()
+            if (key.isNotEmpty()) {
+                uniqueMap[key] = p
+            }
+        }
+        uniqueMap.values.toList()
     }
 
     val selectedProfileIdFlow: Flow<String?> = context.profilesDataStore.data.map { prefs ->
         prefs[Keys.SELECTED_ID]
     }
 
-    /** Adds a new profile and marks it selected. */
+    /**
+     * Adds a new profile or updates an existing one if a profile with the same name already exists,
+     * guaranteeing that profile names are unique (no two records can share the same name).
+     */
     suspend fun addProfile(name: String, config: NtripConfig): NtripProfile {
-        val profile = NtripProfile(id = UUID.randomUUID().toString(), name = name, config = config)
+        val trimmedName = name.trim().ifBlank { "Profile" }
+        var savedProfile: NtripProfile? = null
         context.profilesDataStore.edit { prefs ->
             val current = NtripProfileJson.parse(prefs[Keys.PROFILES_JSON])
-            prefs[Keys.PROFILES_JSON] = NtripProfileJson.serialize(current + profile)
-            prefs[Keys.SELECTED_ID] = profile.id
+            val existingIndex = current.indexOfFirst { it.name.trim().equals(trimmedName, ignoreCase = true) }
+            val updatedList = if (existingIndex >= 0) {
+                // Name already exists -> overwrite existing record with the new config
+                val existing = current[existingIndex]
+                val updated = existing.copy(name = trimmedName, config = config)
+                savedProfile = updated
+                current.toMutableList().apply { set(existingIndex, updated) }
+            } else {
+                val newProfile = NtripProfile(id = UUID.randomUUID().toString(), name = trimmedName, config = config)
+                savedProfile = newProfile
+                current + newProfile
+            }
+            prefs[Keys.PROFILES_JSON] = NtripProfileJson.serialize(updatedList)
+            prefs[Keys.SELECTED_ID] = savedProfile!!.id
         }
-        return profile
+        return savedProfile!!
     }
 
+    /**
+     * Updates the name and config of a profile. If the new name matches another existing profile,
+     * deduplicates by removing the other record to maintain strictly unique names.
+     */
     suspend fun updateProfile(id: String, name: String, config: NtripConfig) {
+        val trimmedName = name.trim().ifBlank { "Profile" }
         context.profilesDataStore.edit { prefs ->
             val current = NtripProfileJson.parse(prefs[Keys.PROFILES_JSON])
-            val updated = current.map { if (it.id == id) it.copy(name = name, config = config) else it }
+            // Remove any other profile that already has this name
+            val filtered = current.filterNot { it.id != id && it.name.trim().equals(trimmedName, ignoreCase = true) }
+            val updated = filtered.map { if (it.id == id) it.copy(name = trimmedName, config = config) else it }
             prefs[Keys.PROFILES_JSON] = NtripProfileJson.serialize(updated)
         }
     }

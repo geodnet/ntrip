@@ -111,6 +111,8 @@ fun NtripScreen(viewModel: NtripViewModel) {
     val bleDevices by viewModel.bleDevices.collectAsState()
     val bleIsScanning by viewModel.bleIsScanning.collectAsState()
     val bleState by viewModel.bleConnectionState.collectAsState()
+    val lastBleName by viewModel.lastBleName.collectAsState()
+    val lastBleAddress by viewModel.lastBleAddress.collectAsState()
     val bestFix by viewModel.bestFix.collectAsState()
     val nearbyStations by viewModel.nearbyStations.collectAsState()
     val isCoverageLoading by viewModel.isCoverageLoading.collectAsState()
@@ -121,6 +123,7 @@ fun NtripScreen(viewModel: NtripViewModel) {
     val filterEphemerisForBle by viewModel.filterEphemerisForBle.collectAsState()
     val rawLoggerState by viewModel.rawLoggerState.collectAsState()
     val gnssRawLoggerState by viewModel.gnssRawLoggerState.collectAsState()
+    val soundAlertsEnabled by viewModel.soundAlertsEnabled.collectAsState()
     val sourcetable by viewModel.sourcetable.collectAsState()
     val isSourcetableLoading by viewModel.isSourcetableLoading.collectAsState()
     val sourcetableError by viewModel.sourcetableError.collectAsState()
@@ -206,6 +209,8 @@ fun NtripScreen(viewModel: NtripViewModel) {
                 bleState = bleState,
                 bleDevices = bleDevices,
                 bleIsScanning = bleIsScanning,
+                lastBleName = lastBleName,
+                lastBleAddress = lastBleAddress,
                 filterEphemeris = filterEphemerisForBle,
                 epochStats = epochStats,
                 onStartScan = { viewModel.startBleScan() },
@@ -237,9 +242,11 @@ fun NtripScreen(viewModel: NtripViewModel) {
                 mockLocationState = mockLocationState,
                 nmeaServerState = nmeaServerState,
                 rtcmServerState = rtcmServerState,
+                soundAlertsEnabled = soundAlertsEnabled,
                 onToggleMockLocation = { viewModel.setMockLocationEnabled(it) },
                 onToggleNmeaServer = { viewModel.setNmeaServerEnabled(it) },
                 onToggleRtcmServer = { viewModel.setRtcmServerEnabled(it) },
+                onToggleSoundAlerts = { viewModel.setSoundAlertsEnabled(it) },
             )
 
             // 6. Dual Data Logger Card
@@ -307,8 +314,8 @@ fun NtripScreen(viewModel: NtripViewModel) {
                 profileName = it.name
             },
             onDeleteProfile = { viewModel.deleteProfile(it) },
-            onSaveAsNew = { viewModel.saveAsNewProfile(profileName.ifBlank { "Profile ${profiles.size + 1}" }, currentConfig()) },
-            onUpdateSelected = { viewModel.updateSelectedProfile(profileName.ifBlank { "Unnamed" }, currentConfig()) },
+            onSaveAsNew = { viewModel.saveAsNewProfile(profileName, currentConfig()) },
+            onUpdateSelected = { viewModel.updateSelectedProfile(profileName, currentConfig()) },
             onConnect = {
                 viewModel.updateConfig(currentConfig())
                 viewModel.connect()
@@ -545,6 +552,8 @@ private fun BleReceiverCard(
     bleState: com.geodnet.ntrip.ble.BleConnectionState,
     bleDevices: List<BleDeviceInfo>,
     bleIsScanning: Boolean,
+    lastBleName: String?,
+    lastBleAddress: String?,
     filterEphemeris: Boolean,
     epochStats: com.geodnet.ntrip.rtcm.EpochLatencyStats,
     onStartScan: () -> Unit,
@@ -823,6 +832,51 @@ private fun BleReceiverCard(
                     Text("Error: $it", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 }
 
+                if (!lastBleAddress.isNullOrBlank()) {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onConnectDevice(lastBleAddress) }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "LAST CONNECTED RECEIVER",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontSize = 10.sp
+                                )
+                                Text(
+                                    text = lastBleName?.ifBlank { null } ?: "GNSS Receiver",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = lastBleAddress,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Button(
+                                onClick = { onConnectDevice(lastBleAddress) },
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                            ) {
+                                Text("Connect", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                    }
+                }
+
                 Button(
                     onClick = { if (bleIsScanning) onStopScan() else onStartScan() },
                     modifier = Modifier.fillMaxWidth(),
@@ -837,7 +891,7 @@ private fun BleReceiverCard(
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.SemiBold
                     )
-                    LazyColumn(modifier = Modifier.fillMaxWidth().height(150.dp)) {
+                    LazyColumn(modifier = Modifier.fillMaxWidth().height(240.dp)) {
                         items(bleDevices) { device ->
                             BleDeviceCard(device = device, onConnect = { onConnectDevice(device.address) })
                         }
@@ -1043,9 +1097,11 @@ private fun LocationAndServerCard(
     mockLocationState: com.geodnet.ntrip.location.MockLocationState,
     nmeaServerState: TcpServerState,
     rtcmServerState: TcpServerState,
+    soundAlertsEnabled: Boolean,
     onToggleMockLocation: (Boolean) -> Unit,
     onToggleNmeaServer: (Boolean) -> Unit,
     onToggleRtcmServer: (Boolean) -> Unit,
+    onToggleSoundAlerts: (Boolean) -> Unit,
 ) {
     ElevatedCard(
         modifier = Modifier.fillMaxWidth(),
@@ -1057,7 +1113,7 @@ private fun LocationAndServerCard(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Text("GIS Outputs & Servers", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text("GIS Outputs & Sound Alerts", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
 
             bestFix?.let { fix ->
                 Surface(
@@ -1085,6 +1141,15 @@ private fun LocationAndServerCard(
                     }
                 }
             }
+
+            ToggleRow(
+                label = "RTK Fix Audio Beep Alerts",
+                sublabel = if (soundAlertsEnabled) "Audio beeps for first fix, refix, lost fix, entering/exiting RTK" else "Muted",
+                checked = soundAlertsEnabled,
+                onCheckedChange = onToggleSoundAlerts,
+            )
+
+            HorizontalDivider()
 
             ToggleRow(
                 label = "Android Mock Location Provider",
@@ -1452,13 +1517,23 @@ private fun NtripSettingsDialog(
                         }
                     }
 
+                    val trimmedInputName = profileName.trim()
+                    val existingDuplicate = remember(trimmedInputName, profiles, selectedProfileId) {
+                        if (trimmedInputName.isNotEmpty()) {
+                            profiles.find { it.name.trim().equals(trimmedInputName, ignoreCase = true) && it.id != selectedProfileId }
+                        } else null
+                    }
+
                     OutlinedTextField(
                         value = profileName,
                         onValueChange = onProfileNameChange,
                         label = { Text("Profile Name") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(10.dp)
+                        shape = RoundedCornerShape(10.dp),
+                        supportingText = if (existingDuplicate != null) {
+                            { Text("⚠️ Profile name already exists. Saving will update/overwrite it.", color = MaterialTheme.colorScheme.error) }
+                        } else null
                     )
 
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
