@@ -124,7 +124,16 @@
   var lastBase = null;
   var hasCenteredOnce = false;
 
+  // When user interacts with the map (zoom in/out, drag, pinch, scroll), temporarily disable auto-zoom/follow
   map.on('dragstart', function () { followRover = false; });
+  map.on('zoomstart', function () { followRover = false; });
+  map.on('movestart', function (e) {
+    if (e.originalEvent) { followRover = false; }
+  });
+  map.on('touchstart', function (e) {
+    if (e.touches && e.touches.length > 1) { followRover = false; }
+  });
+  map.on('mousedown', function () { followRover = false; });
 
   function qualityColor(q) {
     if (q === 4) return '#10b981'; // RTK fixed
@@ -255,17 +264,20 @@
   };
 
   var nearbyStationLayer = L.layerGroup().addTo(map);
-  var nearbyVisible = true;
-
-  var NEARBY_BASE_ICON = L.divIcon({
-    className: '',
-    html: '<svg width="22" height="22" viewBox="0 0 22 22">' +
-      '<polygon points="11,2 20,18 2,18" fill="#8b5cf6" stroke="#0f172a" stroke-width="2"/>' +
-      '<circle cx="11" cy="13" r="2.5" fill="#ffffff"/>' +
-      '</svg>',
-    iconSize: [22, 22],
-    iconAnchor: [11, 16],
-  });
+  function createNearbyBaseIcon(isActive) {
+    var color = isActive ? '#10b981' : '#8b5cf6';
+    var size = isActive ? 26 : 22;
+    var anchor = isActive ? [13, 20] : [11, 17];
+    return L.divIcon({
+      className: '',
+      html: '<svg width="' + size + '" height="' + size + '" viewBox="0 0 24 24">' +
+        '<polygon points="12,2 22,20 2,20" fill="' + color + '" stroke="#0f172a" stroke-width="2.5"/>' +
+        '<circle cx="12" cy="14" r="3" fill="#ffffff"/>' +
+        '</svg>',
+      iconSize: [size, size],
+      iconAnchor: anchor,
+    });
+  }
 
   window.setNearbyStations = function (stationsJson) {
     nearbyStationLayer.clearLayers();
@@ -276,24 +288,28 @@
         var st = stations[i];
         var displayName = (st.shortName || st.name.slice(-5)).toUpperCase();
         var azimuthStr = st.azimuthDeg !== undefined ? (st.azimuthDeg.toFixed(1) + '° ' + (st.cardinalDirection || '')) : '';
+        var isActive = !!st.isActive;
         var isOpt = st.distanceKm <= 25.0;
-        var badgeColor = isOpt ? '#10b981' : '#f59e0b';
-        var badgeText = isOpt ? 'Optimal RTK' : 'Extended RTK';
+        var badgeColor = isActive ? '#10b981' : (isOpt ? '#3b82f6' : '#64748b');
+        var badgeText = isActive ? 'ACTIVE BASE ✓' : (isOpt ? 'Optimal RTK' : 'Extended RTK');
 
         var popupContent =
-          '<div style="font-family:-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif; min-width:150px; padding:2px;">' +
+          '<div style="font-family:-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif; min-width:160px; padding:2px;">' +
           '<div style="font-weight:700; font-size:13px; color:#0f172a; display:flex; justify-content:space-between; align-items:center;">' +
           '<span>Base #' + displayName + '</span>' +
-          '<span style="background:' + badgeColor + '20; color:' + badgeColor + '; border:1px solid ' + badgeColor + '; border-radius:4px; padding:1px 5px; font-size:9px; font-weight:700;">' + badgeText + '</span>' +
+          '<span style="background:' + badgeColor + '20; color:' + badgeColor + '; border:1px solid ' + badgeColor + '; border-radius:4px; padding:1px 6px; font-size:9px; font-weight:700;">' + badgeText + '</span>' +
           '</div>' +
           '<div style="font-size:12px; color:#334155; margin-top:4px;">Baseline: <b>' + st.distanceKm.toFixed(2) + ' km</b></div>' +
           (azimuthStr ? '<div style="font-size:11px; color:#64748b; margin-top:2px;">Azimuth: <b>' + azimuthStr + '</b></div>' : '') +
           '<div style="font-size:10px; color:#94a3b8; font-family:monospace; margin-top:4px;">' + st.lat.toFixed(6) + ', ' + st.lng.toFixed(6) + '</div>' +
           '</div>';
 
-        var marker = L.marker([st.lat, st.lng], { icon: NEARBY_BASE_ICON })
-          .bindPopup(popupContent)
-          .bindTooltip('#' + displayName + ' (' + st.distanceKm.toFixed(1) + 'km' + (azimuthStr ? ', ' + azimuthStr : '') + ')', { permanent: false, direction: 'top' });
+        var marker = L.marker([st.lat, st.lng], {
+          icon: createNearbyBaseIcon(isActive),
+          zIndexOffset: isActive ? 1000 : 0
+        })
+        .bindPopup(popupContent)
+        .bindTooltip('#' + displayName + ' (' + (isActive ? 'ACTIVE BASE' : st.distanceKm.toFixed(1) + 'km') + ')', { permanent: false, direction: 'top' });
 
         if (nearbyVisible) marker.addTo(nearbyStationLayer);
       }
@@ -339,13 +355,59 @@
   };
 
   window.setStaticSegments = function (segmentsJson) {
-    var segs = JSON.parse(segmentsJson);
     segmentLayer.clearLayers();
-    for (var i = 0; i < segs.length; i++) {
-      var s = segs[i];
-      L.circleMarker([s[0], s[1]], {
-        radius: 7, color: '#8b5cf6', weight: 2, fillColor: '#c4b5fd', fillOpacity: 0.85
-      }).bindTooltip('Static Survey: epochs=' + s[2] + '  std=' + s[3].toFixed(3) + 'm').addTo(segmentLayer);
+    if (!segmentsJson) return;
+    try {
+      var segs = JSON.parse(segmentsJson);
+      for (var i = 0; i < segs.length; i++) {
+        var s = segs[i];
+        var lat = s[0];
+        var lon = s[1];
+        var epochs = s[2];
+        var stdM = s[3];
+        var altM = s.length > 4 ? s[4] : 0;
+        var durSec = s.length > 5 ? s[5] : epochs;
+
+        var popupHtml =
+          '<div style="font-family:-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif; min-width:160px; padding:2px;">' +
+          '<div style="font-weight:700; font-size:13px; color:#7c3aed;">📍 Static Survey #' + (i + 1) + '</div>' +
+          '<div style="font-size:12px; color:#334155; margin-top:4px;">Occupied: <b>' + epochs + ' epochs</b> (~' + durSec + 's)</div>' +
+          '<div style="font-size:12px; color:#334155;">Precision: <b>±' + (stdM * 1000).toFixed(1) + ' mm</b></div>' +
+          '<div style="font-size:11px; color:#475569;">Elevation: <b>' + altM.toFixed(3) + ' m</b></div>' +
+          '<div style="font-size:10px; color:#94a3b8; font-family:monospace; margin-top:4px;">' + lat.toFixed(7) + ', ' + lon.toFixed(7) + '</div>' +
+          '</div>';
+
+        L.circleMarker([lat, lon], {
+          radius: 8,
+          color: '#7c3aed',
+          weight: 2.5,
+          fillColor: '#c4b5fd',
+          fillOpacity: 0.88
+        })
+        .bindPopup(popupHtml)
+        .bindTooltip('Static #' + (i + 1) + ' (±' + (stdM * 1000).toFixed(0) + 'mm)', { permanent: false, direction: 'top' })
+        .addTo(segmentLayer);
+      }
+    } catch (e) {
+      console.error('Error setting static segments', e);
+    }
+  };
+
+  window.zoomToStaticSegment = function (lat, lon) {
+    followRover = false;
+    map.setView([lat, lon], 19, { animate: true });
+  };
+
+  window.zoomToAllStaticSegments = function (segmentsJson) {
+    if (!segmentsJson) return;
+    try {
+      var segs = JSON.parse(segmentsJson);
+      if (segs.length === 0) return;
+      var latLngs = segs.map(function (s) { return [s[0], s[1]]; });
+      followRover = false;
+      map.fitBounds(L.latLngBounds(latLngs), { padding: [60, 60] });
+    } catch (e) {
+      console.error('Error zooming to static segments', e);
     }
   };
 })();

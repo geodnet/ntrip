@@ -36,33 +36,35 @@ saveable connection profiles instead (add/load/update/delete) — see `CLAUDE.md
 ### 📡 1. BLE RTK Receiver Integration & MTU Optimization
 - **Nordic UART Service (NUS)**: Connects to external Bluetooth Low Energy GNSS receivers (u-blox, Unicore, Septentrio, etc.).
 - **Optimized MTU (517 Bytes / 512B Payload)**: Automatically negotiates maximum BLE ATT MTU size and sets `CONNECTION_PRIORITY_HIGH` (11.25ms–15ms interval) for unfragmented, low-latency RTCM correction delivery.
-- **NMEA Parser**: Continuously parses `$GNGGA`, `$GNRMC`, `$GNGST`, and `$GNGSA` for coordinates, DOPs, satellites, and precision standard deviations ($\sigma_{\text{lat}}, \sigma_{\text{lon}}, \sigma_{\text{alt}}$).
+- **Mixed Stream NMEA & RTCM3 Parser**: Continuously parses `$GNGGA`, `$GNRMC`, `$GNGST`, `$GNGSA` sentences AND binary `0xD3` RTCM3 frames (MSM, 1005 ARP, ephemerides) with CRC-24Q verification and dual message breakdown counters.
 - **Bi-Directional Communication**: Streams differential RTCM 3.x correction frames directly to the receiver over BLE.
 
 ### 🌐 2. NTRIP 2.0 Caster Bridge & Sourcetable Browser
 - High-performance NTRIP Client supporting CORS networks (Default: `rtk.geodnet.com:2101`).
+- **GEODNET Regional Datum Resolver**: Automatically resolves dynamic geodetic datums from rover coordinates for `AUTO` and explicit mountpoints (`AUTO_ITRF2020`, `AUTO_WGS84`, `NATRF2020`, `SIRGAS2000`, etc.) per `geodnet.github.io/rtk`.
 - **Live NTRIP Sourcetable Pulling**: Query and browse available mountpoints, formats (`RTCM 3.3`), constellations (`GPS+GLO+GAL+BDS`), and NMEA requirements directly from any caster.
 - **NTRIP Profile Manager**: Manage, save, and switch named connection profiles across multiple casters.
 - **Smart Phone Location Fallback**: Automatically initializes caster connection with phone GPS fix when no BLE RTK receiver is connected.
-- **GNSS Ephemeris Filtering**: Optional toggle to filter out heavy satellite ephemeris frames (`1019`, `1020`, `1041-1046`) before forwarding over BLE.
+- **GNSS Ephemeris Filtering**: Default-enabled toggle to filter out heavy satellite ephemeris frames (`1019`, `1020`, `1041-1046`) before forwarding over BLE.
 
-### 🛰️ 3. GEODNET Base Station Discovery & "Switch Base" Coordination
+### 🛰️ 3. GEODNET Base Station Discovery & Active Station Matching
 - **Proximity Discovery**: Discovers up to 20 active GEODNET base stations within a 100 km radius.
+- **Active Base Station Matching**: Cross-matches RTCM 1005 ARP station IDs/coordinates and GGA differential station IDs to highlight the connected base station in green (`#10b981`), while rendering surrounding network base stations normally.
 - **Real-Time Baseline & Azimuth**: Displays baseline distance, azimuth degrees, and cardinal bearings to each base station.
-- **"Switch Base" Rerouting**: 1-tap base switching that updates reference coordinates and immediately reroutes the caster's differential stream.
 
 ### ⏱️ 4. RTCM 3.x Inspector & Latency Engine
 - Real-time decoding of RTCM 3.x message types:
   - **Base Station ARP**: `1005` / `1006`
-  - **MSM Observation Frames**: `107X` (GPS), `108X` (GLONASS), `109X` (Galileo), `110X` (QZSS), `111X` (SBAS), `112X` (BeiDou), `113X` (NavIC)
+  - **MSM Observation Frames**: `107X` (GPS), `108X` (GLONASS), `109X` (Galileo), `110X` (QZSS), `111X` (SBAS), `112X` (BeiDou), `113X` (NavIC) with compact log formatting
   - **Auxiliary Frames**: `1033` (Antenna/Receiver Descriptor), `1230` (GLONASS Code-Phase Biases), `1019-1046` (Satellite Ephemerides)
 - **Epoch Latency Engine**: Calculates epoch duration, first message latency, last message latency, and differential age.
 
 ### 🗺️ 5. Offline Leaflet Map & Survey HUD
 - **Offline Leaflet Map**: Embedded satellite and street basemaps with persistent layer selection across sessions.
+- **Interactive Gestures & Auto-Zoom**: Auto-zooms to rover on launch and smoothly pauses auto-zoom/following during manual pan/zoom gestures (with 1-tap re-center FAB).
 - **Point-Based Trajectory Tracking**: Renders discrete survey track points color-coded by RTK fix quality (Green: RTK Fix, Amber: RTK Float, Blue: DGPS, Pink: Single).
 - **Survey HUD Banner**: Displays real-time Baseline Length [km], Base Data Latency [s], Satellites, RMS horizontal/vertical accuracy, and Base ID.
-- **Static Segment Auto-Detection**: Automatically detects static survey stops using spatial clustering (>5s duration, <5cm movement).
+- **Static Segment Auto-Detection**: Automatically detects static survey stops using 2D horizontal clustering (>5s duration, adaptive cutoff: 15cm RTK fixed / 35cm float / 1m autonomous) with real-time UI display.
 
 ### 📲 6. Android Mock Location & Local GIS TCP Servers
 - **Android Mock Location Provider**: Injects high-precision RTK fixes directly into the Android OS (`LocationManager`) for third-party mapping and surveying apps.

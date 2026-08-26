@@ -111,7 +111,7 @@ class NtripViewModel(app: Application) : AndroidViewModel(app) {
     private val _showBaseStation = MutableStateFlow(false)
     val showBaseStation: StateFlow<Boolean> = _showBaseStation.asStateFlow()
 
-    private val _filterEphemerisForBle = MutableStateFlow(false)
+    private val _filterEphemerisForBle = MutableStateFlow(true)
     val filterEphemerisForBle: StateFlow<Boolean> = _filterEphemerisForBle.asStateFlow()
 
     private val coverageRepository = GeodnetCoverageRepository(app)
@@ -222,6 +222,13 @@ class NtripViewModel(app: Application) : AndroidViewModel(app) {
             bleReceiver.state.collect { state ->
                 service?.onBleConnectionChanged(state.status == BleStatus.CONNECTED, state.deviceAddress)
                 state.latestFix?.let { service?.onBleFix(it) }
+            }
+        }
+        viewModelScope.launch {
+            bleReceiver.nmeaSentences.collect { sentence ->
+                if (sentence is com.geodnet.ntrip.ble.NmeaSentence.Gga) {
+                    service?.onBleFix(sentence)
+                }
             }
         }
         viewModelScope.launch {
@@ -438,9 +445,31 @@ class NtripViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Applies a discovered base station mountpoint and replaces the configured
-     * NMEA lat/lon with the base station's coordinates (only lat/lon are replaced)
-     * so that the NTRIP caster streams that specific station's RTCM data.
+     * Switches the active base station for GEODNET RTK:
+     * Does NOT change the caster mountpoint (keeps AUTO / configured mountpoint intact)
+     * and updates the GGA uploaded coordinates to the selected base station's coordinates.
+     */
+    fun applyBaseCoordinate(lat: Double, lon: Double, alt: Double? = null) {
+        val current = _config.value
+        val updated = current.copy(
+            latitude = lat,
+            longitude = lon,
+            altitude = alt ?: current.altitude,
+            useLiveLocation = false,
+        )
+        updateConfig(updated)
+
+        val currentStatus = _connectionState.value.status
+        if (currentStatus == NtripStatus.CONNECTED || currentStatus == NtripStatus.CONNECTING) {
+            service?.stopConnection()
+            service?.start(updated)
+        }
+    }
+
+    /**
+     * Applies a discovered base station or sourcetable mountpoint.
+     * When selecting a GEODNET base station (lat/lon present), it keeps the mountpoint
+     * intact and uploads the station's coordinates in GGA.
      */
     fun applyMountpoint(mountpoint: String, lat: Double? = null, lon: Double? = null) {
         val targetStation = _nearbyStations.value.find {
@@ -449,19 +478,39 @@ class NtripViewModel(app: Application) : AndroidViewModel(app) {
         val targetLat = lat ?: targetStation?.lat
         val targetLon = lon ?: targetStation?.lng
 
+        if (targetLat != null && targetLon != null) {
+            applyBaseCoordinate(targetLat, targetLon)
+        } else {
+            val current = _config.value
+            val updated = current.copy(mountpoint = mountpoint)
+            updateConfig(updated)
+
+            val currentStatus = _connectionState.value.status
+            if (currentStatus == NtripStatus.CONNECTED || currentStatus == NtripStatus.CONNECTING) {
+                service?.stopConnection()
+                service?.start(updated)
+            }
+        }
+    }
+
+    /**
+     * Resets the GGA upload back to the live rover GPS position.
+     */
+    fun resetToLiveLocation() {
         val current = _config.value
-        val updated = if (targetLat != null && targetLon != null) {
+        val best = _bestFix.value
+        val updated = if (best != null) {
             current.copy(
-                mountpoint = mountpoint,
-                latitude = targetLat,
-                longitude = targetLon
+                latitude = best.latitude,
+                longitude = best.longitude,
+                altitude = best.altitudeM,
+                useLiveLocation = true,
             )
         } else {
-            current.copy(mountpoint = mountpoint)
+            current.copy(useLiveLocation = true)
         }
         updateConfig(updated)
 
-        // If currently connected to NTRIP caster, restart connection to immediately switch base stream on caster
         val currentStatus = _connectionState.value.status
         if (currentStatus == NtripStatus.CONNECTED || currentStatus == NtripStatus.CONNECTING) {
             service?.stopConnection()

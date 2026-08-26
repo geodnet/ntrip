@@ -25,7 +25,7 @@ data class StaticSegment(
  * calculation and much cheaper.
  */
 class StaticSegmentDetector(
-    private val distanceCutoffM: Double = 0.05,
+    private val distanceCutoffM: Double = 0.15,
     private val minDurationMs: Long = 5_000,
 ) {
     private val cluster = mutableListOf<PositionFix>()
@@ -35,11 +35,17 @@ class StaticSegmentDetector(
      * count), else null. The fix that broke the cluster always starts a fresh candidate cluster
      * of its own -- it doesn't just get dropped. */
     fun accept(fix: PositionFix): StaticSegment? {
+        val effectiveCutoff = when (fix.fixQuality) {
+            4 -> distanceCutoffM // RTK Fixed: high precision
+            5 -> distanceCutoffM * 2.5 // RTK Float: medium precision
+            else -> (distanceCutoffM * 6.0).coerceAtLeast(1.0) // Autonomous/Phone fallback
+        }.coerceAtLeast(distanceCutoffM)
+
         if (cluster.isEmpty()) {
             cluster += fix
             return null
         }
-        if (distanceMeters(clusterMean(), fix) <= distanceCutoffM) {
+        if (horizontalDistanceMeters(clusterMean(), fix) <= effectiveCutoff) {
             cluster += fix
             return null
         }
@@ -47,6 +53,16 @@ class StaticSegmentDetector(
         cluster.clear()
         cluster += fix
         return finished
+    }
+
+    /** Returns the currently active static segment if holding still for >= minDurationMs,
+     * allowing real-time detection without needing to break the cluster first. */
+    fun currentSegment(): StaticSegment? {
+        if (cluster.size < 2) return null
+        val start = cluster.first().timestampMs
+        val end = cluster.last().timestampMs
+        if (end - start < minDurationMs) return null
+        return buildSegment(start, end)
     }
 
     /** Finalizes whatever cluster is currently open (if it's long enough), for callers that want
@@ -62,8 +78,12 @@ class StaticSegmentDetector(
         val start = cluster.first().timestampMs
         val end = cluster.last().timestampMs
         if (end - start < minDurationMs) return null
+        return buildSegment(start, end)
+    }
+
+    private fun buildSegment(start: Long, end: Long): StaticSegment {
         val mean = clusterMean()
-        val variance = cluster.map { val d = distanceMeters(mean, it); d * d }.average()
+        val variance = cluster.map { val d = horizontalDistanceMeters(mean, it); d * d }.average()
         return StaticSegment(
             meanLatDeg = mean.latitude,
             meanLonDeg = mean.longitude,
@@ -82,12 +102,11 @@ class StaticSegmentDetector(
         return cluster.last().copy(latitude = lat, longitude = lon, altitudeM = alt)
     }
 
-    private fun distanceMeters(a: PositionFix, b: PositionFix): Double {
+    private fun horizontalDistanceMeters(a: PositionFix, b: PositionFix): Double {
         val latAvgRad = Math.toRadians((a.latitude + b.latitude) / 2)
         val dx = Math.toRadians(b.longitude - a.longitude) * cos(latAvgRad) * EARTH_RADIUS_M
         val dy = Math.toRadians(b.latitude - a.latitude) * EARTH_RADIUS_M
-        val dz = b.altitudeM - a.altitudeM
-        return sqrt(dx * dx + dy * dy + dz * dz)
+        return sqrt(dx * dx + dy * dy)
     }
 
     companion object {

@@ -12,6 +12,10 @@ data class BleConnectionState(
     val latestGsa: NmeaSentence.Gsa? = null,
     val bytesFromReceiver: Long = 0,
     val bytesToReceiver: Long = 0,
+    val messagesReceived: Long = 0,
+    val messagesSent: Long = 0,
+    val nmeaCounts: Map<String, Int> = emptyMap(),
+    val rtcmCounts: Map<String, Int> = emptyMap(),
     val mtu: Int = 23,
 )
 

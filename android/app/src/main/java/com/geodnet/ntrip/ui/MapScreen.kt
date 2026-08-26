@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -170,6 +171,37 @@ val BaseTowerIcon: ImageVector by lazy {
     }.build()
 }
 
+val PinDropIcon: ImageVector by lazy {
+    ImageVector.Builder(
+        name = "PinDrop",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f
+    ).apply {
+        path(fill = SolidColor(Color.Black)) {
+            moveTo(18f, 8f)
+            curveTo(18f, 4.69f, 15.31f, 2f, 12f, 2f)
+            curveTo(8.69f, 2f, 6f, 4.69f, 6f, 8f)
+            curveTo(6f, 12.5f, 12f, 19f, 12f, 19f)
+            curveTo(12f, 19f, 18f, 12.5f, 18f, 8f)
+            close()
+            moveTo(12f, 10f)
+            curveTo(10.9f, 10f, 10f, 9.1f, 10f, 8f)
+            curveTo(10f, 6.9f, 10.9f, 6f, 12f, 6f)
+            curveTo(13.1f, 6f, 14f, 6.9f, 14f, 8f)
+            curveTo(14f, 9.1f, 13.1f, 10f, 12f, 10f)
+            close()
+            moveTo(5f, 20f)
+            verticalLineTo(22f)
+            horizontalLineTo(19f)
+            verticalLineTo(20f)
+            horizontalLineTo(5f)
+            close()
+        }
+    }.build()
+}
+
 /**
  * Offline Leaflet map view with a floating Glassmorphic Survey HUD and interactive Camera FABs.
  */
@@ -191,6 +223,7 @@ fun MapScreen(viewModel: NtripViewModel) {
     var pageReady by remember { mutableStateOf(false) }
     var sentTrajectoryCount by remember { mutableStateOf(0) }
     var showNearbyDialog by remember { mutableStateOf(false) }
+    var showStaticDialog by remember { mutableStateOf(false) }
 
     Box(modifier = Modifier.fillMaxSize()) {
         // 1. Fullscreen Leaflet WebView
@@ -233,14 +266,14 @@ fun MapScreen(viewModel: NtripViewModel) {
             )
         }
 
-        // 3. Right Floating Map Action Controls (Center Rover, Fit Extents, Base Station Toggle, Nearby NET Popup)
+        // 3. Right Floating Map Action Controls (Center Rover, Fit Extents, Base Station Toggle, Static Segments, Nearby NET Popup)
         Column(
             modifier = Modifier
                 .align(Alignment.CenterEnd)
                 .padding(end = 14.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // Re-center Rover
+            // Re-center Rover (Phone or BLE RTK Receiver)
             FloatingActionButton(
                 onClick = { webViewRef?.evaluateJavascript("centerRover()", null) },
                 shape = CircleShape,
@@ -288,6 +321,39 @@ fun MapScreen(viewModel: NtripViewModel) {
                 )
             }
 
+            // Toggle / View Detected Static Segments
+            FloatingActionButton(
+                onClick = { showStaticDialog = true },
+                shape = CircleShape,
+                containerColor = if (staticSegments.isNotEmpty()) Color(0xFF7C3AED) else MaterialTheme.colorScheme.surface,
+                contentColor = if (staticSegments.isNotEmpty()) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                elevation = FloatingActionButtonDefaults.elevation(4.dp),
+                modifier = Modifier.size(46.dp)
+            ) {
+                if (staticSegments.isNotEmpty()) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "${staticSegments.size}",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp
+                        )
+                        Text(
+                            text = "SEG",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 8.sp
+                        )
+                    }
+                } else {
+                    Icon(
+                        imageVector = PinDropIcon,
+                        contentDescription = "Static Segments",
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+
             // Open Nearby GEODNET Base Stations Popup Window
             FloatingActionButton(
                 onClick = { showNearbyDialog = true },
@@ -322,11 +388,13 @@ fun MapScreen(viewModel: NtripViewModel) {
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Text(
-                    "Track: ${trajectory.size} pts • Net: ${nearbyStations.size} bases",
+                    "Track: ${trajectory.size} pts • Net: ${nearbyStations.size} bases • Static: ${staticSegments.size} segs",
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.clickable { showNearbyDialog = true }
+                    modifier = Modifier.clickable {
+                        if (staticSegments.isNotEmpty()) showStaticDialog = true else showNearbyDialog = true
+                    }
                 )
                 if (trajectory.isNotEmpty()) {
                     Text(
@@ -348,17 +416,47 @@ fun MapScreen(viewModel: NtripViewModel) {
     if (showNearbyDialog) {
         NearbyStationsDialog(
             nearbyStations = nearbyStations,
-            currentMountpoint = config.mountpoint,
+            baseStation = baseStation,
+            epochStats = epochStats,
+            diffStationId = bestFix?.diffStationId,
             onDismiss = { showNearbyDialog = false },
-            onSelectMountpoint = { selectedMountpoint, selectedLat, selectedLon ->
-                viewModel.applyMountpoint(selectedMountpoint, selectedLat, selectedLon)
-                showNearbyDialog = false
-            },
             onCenterOnStation = { lat, lng ->
                 webViewRef?.evaluateJavascript("window.centerRover = null; map.setView([$lat, $lng], 16)", null)
                 showNearbyDialog = false
             }
         )
+    }
+
+    if (showStaticDialog) {
+        StaticSegmentsDialog(
+            staticSegments = staticSegments,
+            onDismiss = { showStaticDialog = false },
+            onZoomToSegment = { lat, lng ->
+                webViewRef?.evaluateJavascript("window.zoomToStaticSegment($lat, $lng)", null)
+                showStaticDialog = false
+            },
+            onZoomToAll = {
+                webViewRef?.evaluateJavascript("window.zoomToAllStaticSegments('${segmentsJson(staticSegments)}')", null)
+                showStaticDialog = false
+            }
+        )
+    }
+
+    // Auto-zoom to current location (phone or RTK receiver) on tab switch / page load
+    LaunchedEffect(pageReady) {
+        if (pageReady) {
+            val fix = bestFix
+            if (fix != null && (fix.latitude != 0.0 || fix.longitude != 0.0)) {
+                webViewRef?.evaluateJavascript(
+                    "setRover(${fix.latitude}, ${fix.longitude}, ${fix.altitudeM}, ${fix.fixQuality})",
+                    null
+                )
+                webViewRef?.evaluateJavascript(
+                    "map.setView([${fix.latitude}, ${fix.longitude}], 18, { animate: true })",
+                    null
+                )
+            }
+        }
     }
 
     LaunchedEffect(pageReady, showBaseStation) {
@@ -369,9 +467,12 @@ fun MapScreen(viewModel: NtripViewModel) {
         if (pageReady) webViewRef?.evaluateJavascript("setNearbyStationsVisible($showNearbyStations)", null)
     }
 
-    LaunchedEffect(pageReady, nearbyStations) {
+    LaunchedEffect(pageReady, nearbyStations, baseStation, epochStats, bestFix) {
         if (pageReady) {
-            webViewRef?.evaluateJavascript("setNearbyStations('${nearbyStationsJson(nearbyStations)}')", null)
+            webViewRef?.evaluateJavascript(
+                "setNearbyStations('${nearbyStationsJson(nearbyStations, baseStation, epochStats, bestFix?.diffStationId)}')",
+                null
+            )
         }
     }
 
@@ -433,12 +534,18 @@ private fun MapSurveyHud(
     val baseId = when {
         fix != null && fix.diffStationId != 0 -> fix.diffStationId
         baseStation != null -> baseStation.staId
+        epochStats.baseStationId != null -> epochStats.baseStationId
         else -> null
     }
 
-    // Base station data latency (rover time tag - base station last obs time tag)
-    val latencySec: Double? = fix?.diffAgeSec
-        ?: (epochStats.lastMessageAgeMs.takeIf { it > 0 }?.let { it / 1000.0 })
+    // AGE of differential corrections (from NMEA GGA field 13)
+    val ageSec: Double? = fix?.diffAgeSec?.takeIf { it > 0.0 }
+
+    // LATENCY: Rover NMEA GGA time tag - Base station RTCM observation time tag
+    val latencySec: Double? = com.geodnet.ntrip.rtcm.TimeTagMath.calculateLatencySec(
+        roverGgaUtcTime = fix?.utcTime,
+        baseTimeTagUtcSec = epochStats.lastBaseTimeTagUtcSec
+    ) ?: (epochStats.lastMessageAgeMs.takeIf { it > 0 }?.let { it / 1000.0 })
 
     // Baseline length in km between rover and connected/configured base
     val baselineKm: Double? = baseStation?.baselineKm
@@ -464,7 +571,7 @@ private fun MapSurveyHud(
     ) {
         Row(
             modifier = Modifier
-                .padding(horizontal = 12.dp, vertical = 8.dp)
+                .padding(horizontal = 10.dp, vertical = 8.dp)
                 .fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
@@ -477,10 +584,22 @@ private fun MapSurveyHud(
             ) {
                 Text(
                     text = qualityLabel,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Bold,
-                    color = qualityColor
+                    color = qualityColor,
+                    fontSize = 11.sp
+                )
+            }
+
+            // Base ID (from NMEA GGA field 14 / RTCM)
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("BASE ID", style = MaterialTheme.typography.labelSmall, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    text = baseId?.let { "#$it" } ?: "—",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace
                 )
             }
 
@@ -496,13 +615,25 @@ private fun MapSurveyHud(
                 )
             }
 
-            // Data Latency (Rover time tag - Base last obs time tag)
+            // AGE (NMEA GGA field 13)
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("AGE", style = MaterialTheme.typography.labelSmall, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    text = ageSec?.let { "%.1fs".format(it) } ?: "—",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+
+            // LATENCY (Rover time tag - Base observation time tag)
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("LATENCY", style = MaterialTheme.typography.labelSmall, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(
                     text = latencySec?.let { "%.1fs".format(it) } ?: "—",
                     style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    color = if ((latencySec ?: 0.0) < 3.0) SurveyColors.Connected else SurveyColors.RtkFloat
                 )
             }
 
@@ -517,17 +648,6 @@ private fun MapSurveyHud(
                 Text("RMS ACC", style = MaterialTheme.typography.labelSmall, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(
                     text = accuracyM?.let { "±%.2fm".format(it) } ?: "—",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    fontFamily = FontFamily.Monospace
-                )
-            }
-
-            // Base ID
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("BASE", style = MaterialTheme.typography.labelSmall, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(
-                    text = baseId?.let { "#$it" } ?: (if (config.mountpoint.isNotBlank() && !config.mountpoint.equals("AUTO", ignoreCase = true)) "#${config.mountpoint.takeLast(5)}" else "—"),
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Bold
                 )
@@ -545,14 +665,35 @@ private fun trajectoryJson(points: List<PositionFix>): String {
 private fun segmentsJson(segments: List<StaticSegment>): String {
     val arr = JSONArray()
     for (s in segments) {
-        arr.put(JSONArray(listOf(s.meanLatDeg, s.meanLonDeg, s.epochCount, s.stdDevM)))
+        val durationSec = ((s.endTimeMs - s.startTimeMs) / 1000).coerceAtLeast(1)
+        arr.put(JSONArray(listOf(s.meanLatDeg, s.meanLonDeg, s.epochCount, s.stdDevM, s.meanAltM, durationSec)))
     }
     return arr.toString()
 }
 
-private fun nearbyStationsJson(stations: List<NearbyStation>): String {
+private fun nearbyStationsJson(
+    stations: List<NearbyStation>,
+    baseStation: com.geodnet.ntrip.rtcm.BaseStationFix? = null,
+    epochStats: com.geodnet.ntrip.rtcm.EpochLatencyStats? = null,
+    diffStationId: Int? = null
+): String {
     val arr = JSONArray()
     for (st in stations) {
+        val isActive = if (baseStation != null && (baseStation.latDeg != 0.0 || baseStation.lonDeg != 0.0)) {
+            val distKm = com.geodnet.ntrip.data.GeodnetCoverageRepository.haversineDistanceKm(
+                st.lat, st.lng, baseStation.latDeg, baseStation.lonDeg
+            )
+            distKm < 0.5
+        } else {
+            val validIds = listOfNotNull(
+                baseStation?.staId?.takeIf { it > 0 },
+                epochStats?.baseStationId?.takeIf { it > 0 },
+                diffStationId?.takeIf { it > 0 }
+            )
+            val stNumericId = st.shortName.toIntOrNull() ?: st.name.filter { it.isDigit() }.toIntOrNull()
+            stNumericId != null && stNumericId > 0 && validIds.contains(stNumericId)
+        }
+
         val obj = JSONObject().apply {
             put("name", st.name)
             put("shortName", st.shortName)
@@ -562,6 +703,7 @@ private fun nearbyStationsJson(stations: List<NearbyStation>): String {
             put("azimuthDeg", st.azimuthDeg)
             put("cardinalDirection", st.cardinalDirection)
             put("isOptimalRtk", st.isOptimalRtk)
+            put("isActive", isActive)
         }
         arr.put(obj)
     }
@@ -575,29 +717,58 @@ private fun nearbyStationsJson(stations: List<NearbyStation>): String {
 @Composable
 private fun NearbyStationsDialog(
     nearbyStations: List<NearbyStation>,
-    currentMountpoint: String,
+    baseStation: com.geodnet.ntrip.rtcm.BaseStationFix?,
+    epochStats: com.geodnet.ntrip.rtcm.EpochLatencyStats,
+    diffStationId: Int?,
     onDismiss: () -> Unit,
-    onSelectMountpoint: (String, Double, Double) -> Unit,
     onCenterOnStation: (Double, Double) -> Unit
 ) {
+    fun isStationMatched(st: NearbyStation): Boolean {
+        // 1. Strict Physical Coordinate Match from RTCM 1005/1006 (within 500 meters)
+        if (baseStation != null && (baseStation.latDeg != 0.0 || baseStation.lonDeg != 0.0)) {
+            val distKm = com.geodnet.ntrip.data.GeodnetCoverageRepository.haversineDistanceKm(
+                st.lat, st.lng, baseStation.latDeg, baseStation.lonDeg
+            )
+            return distKm < 0.5
+        }
+
+        // 2. Exact Numeric Station ID Match (only when coordinates are not yet available)
+        val validIds = listOfNotNull(
+            baseStation?.staId?.takeIf { it > 0 },
+            epochStats.baseStationId?.takeIf { it > 0 },
+            diffStationId?.takeIf { it > 0 }
+        )
+
+        if (validIds.isEmpty()) return false
+
+        val stNumericId = st.shortName.toIntOrNull()
+            ?: st.name.filter { it.isDigit() }.toIntOrNull()
+
+        if (stNumericId != null && stNumericId > 0) {
+            return validIds.any { it == stNumericId }
+        }
+
+        return false
+    }
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
         Surface(
             shape = RoundedCornerShape(20.dp),
-            color = MaterialTheme.colorScheme.surface,
             tonalElevation = 6.dp,
-            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             modifier = Modifier
-                .fillMaxWidth(0.94f)
-                .fillMaxHeight(0.78f)
+                .fillMaxWidth(0.95f)
+                .fillMaxHeight(0.85f)
+                .padding(8.dp)
         ) {
             Column(
-                modifier = Modifier.padding(18.dp),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(18.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // Dialog Header
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -605,20 +776,19 @@ private fun NearbyStationsDialog(
                 ) {
                     Column {
                         Text(
-                            "Nearby GEODNET Stations",
+                            "GEODNET Base Stations",
                             style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
+                            fontWeight = FontWeight.Bold
                         )
                         Text(
-                            if (nearbyStations.isNotEmpty()) "${nearbyStations.size} stations within 100 km" else "No stations in range",
+                            "${nearbyStations.size} active stations within 100 km",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
 
-                    IconButton(onClick = onDismiss) {
-                        Text("✕", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    TextButton(onClick = onDismiss) {
+                        Text("Close")
                     }
                 }
 
@@ -642,8 +812,7 @@ private fun NearbyStationsDialog(
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         items(nearbyStations) { st ->
-                            val isSelected = currentMountpoint.equals(st.name, ignoreCase = true) ||
-                                currentMountpoint.equals(st.shortName, ignoreCase = true)
+                            val isMatched = isStationMatched(st)
                             val (qualityLabel, qualityColor) = when {
                                 st.distanceKm <= 25.0 -> "OPTIMAL RTK" to SurveyColors.RtkFixed
                                 st.distanceKm <= 50.0 -> "EXTENDED RTK" to SurveyColors.RtkFloat
@@ -653,10 +822,10 @@ private fun NearbyStationsDialog(
                             Card(
                                 shape = RoundedCornerShape(14.dp),
                                 colors = CardDefaults.cardColors(
-                                    containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                                    containerColor = if (isMatched) SurveyColors.Connected.copy(alpha = 0.12f)
                                     else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
                                 ),
-                                border = if (isSelected) androidx.compose.foundation.BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary)
+                                border = if (isMatched) androidx.compose.foundation.BorderStroke(1.5.dp, SurveyColors.Connected)
                                 else androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
@@ -677,20 +846,36 @@ private fun NearbyStationsDialog(
                                             color = MaterialTheme.colorScheme.onSurface
                                         )
 
-                                        // RTK Quality Badge
-                                        Surface(
-                                            shape = RoundedCornerShape(6.dp),
-                                            color = qualityColor.copy(alpha = 0.15f),
-                                            border = androidx.compose.foundation.BorderStroke(1.dp, qualityColor)
-                                        ) {
-                                            Text(
-                                                text = qualityLabel,
-                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                                style = MaterialTheme.typography.labelSmall,
-                                                fontWeight = FontWeight.Bold,
-                                                color = qualityColor,
-                                                fontSize = 10.sp
-                                            )
+                                        if (isMatched) {
+                                            Surface(
+                                                shape = RoundedCornerShape(6.dp),
+                                                color = SurveyColors.Connected.copy(alpha = 0.2f),
+                                                border = androidx.compose.foundation.BorderStroke(1.dp, SurveyColors.Connected)
+                                            ) {
+                                                Text(
+                                                    text = "ACTIVE BASE ✓",
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = SurveyColors.Connected,
+                                                    fontSize = 10.sp
+                                                )
+                                            }
+                                        } else {
+                                            Surface(
+                                                shape = RoundedCornerShape(6.dp),
+                                                color = qualityColor.copy(alpha = 0.15f),
+                                                border = androidx.compose.foundation.BorderStroke(1.dp, qualityColor)
+                                            ) {
+                                                Text(
+                                                    text = qualityLabel,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = qualityColor,
+                                                    fontSize = 10.sp
+                                                )
+                                            }
                                         }
                                     }
 
@@ -731,7 +916,7 @@ private fun NearbyStationsDialog(
                                         }
                                     }
 
-                                    // Action Buttons Row
+                                    // Action Button Row
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.End,
@@ -745,31 +930,206 @@ private fun NearbyStationsDialog(
                                         ) {
                                             Text("View on Map", style = MaterialTheme.typography.labelSmall)
                                         }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
-                                        Spacer(modifier = Modifier.width(8.dp))
+/**
+ * Dialog displaying detected static survey occupation points, durations, epoch counts, and millimeter precision.
+ */
+@Composable
+private fun StaticSegmentsDialog(
+    staticSegments: List<StaticSegment>,
+    onDismiss: () -> Unit,
+    onZoomToSegment: (Double, Double) -> Unit,
+    onZoomToAll: () -> Unit,
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            tonalElevation = 6.dp,
+            modifier = Modifier
+                .fillMaxWidth(0.95f)
+                .fillMaxHeight(0.85f)
+                .padding(8.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            "Static Survey Segments",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF7C3AED)
+                        )
+                        Text(
+                            if (staticSegments.isNotEmpty()) "${staticSegments.size} static occupation points detected" else "Stationary GNSS auto-detection",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
 
-                                        if (isSelected) {
-                                            Surface(
-                                                shape = RoundedCornerShape(8.dp),
-                                                color = SurveyColors.Connected.copy(alpha = 0.15f)
-                                            ) {
-                                                Text(
-                                                    "Active Base ✓",
-                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = SurveyColors.Connected
-                                                )
-                                            }
-                                        } else {
-                                            Button(
-                                                onClick = { onSelectMountpoint(st.name, st.lat, st.lng) },
-                                                shape = RoundedCornerShape(8.dp),
-                                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                                modifier = Modifier.height(30.dp)
-                                            ) {
-                                                Text("Switch Base", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
-                                            }
+                    TextButton(onClick = onDismiss) {
+                        Text("Close")
+                    }
+                }
+
+                if (staticSegments.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        OutlinedButton(
+                            onClick = onZoomToAll,
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                            modifier = Modifier.height(32.dp)
+                        ) {
+                            Text("Fit All Segments on Map", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+
+                if (staticSegments.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.padding(20.dp)
+                        ) {
+                            Text("📍", fontSize = 32.sp)
+                            Text(
+                                "No Static Segments Detected Yet",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                "When the receiver holds still for 5+ seconds within a tight cluster (<5cm), the app automatically computes the centroid position and records a high-precision static occupation point.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            )
+                        }
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        itemsIndexed(staticSegments) { index, seg ->
+                            val durationSec = ((seg.endTimeMs - seg.startTimeMs) / 1000).coerceAtLeast(1)
+                            Card(
+                                shape = RoundedCornerShape(14.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = Color(0xFF7C3AED).copy(alpha = 0.08f)
+                                ),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF7C3AED).copy(alpha = 0.4f)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(14.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            "Occupation #${index + 1}",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF7C3AED)
+                                        )
+
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = Color(0xFF7C3AED).copy(alpha = 0.2f),
+                                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF7C3AED))
+                                        ) {
+                                            Text(
+                                                text = "σ = ±%.1f mm".format(seg.stdDevM * 1000.0),
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color(0xFF7C3AED),
+                                                fontSize = 11.sp
+                                            )
+                                        }
+                                    }
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column {
+                                            Text("EPOCHS", style = MaterialTheme.typography.labelSmall, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text(
+                                                "${seg.epochCount} (~${durationSec}s)",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+
+                                        Column {
+                                            Text("ELEVATION", style = MaterialTheme.typography.labelSmall, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text(
+                                                "%.3f m".format(seg.meanAltM),
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+
+                                        Column {
+                                            Text("COORDINATES", style = MaterialTheme.typography.labelSmall, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text(
+                                                "%.7f, %.7f".format(seg.meanLatDeg, seg.meanLonDeg),
+                                                style = MaterialTheme.typography.bodySmall,
+                                                fontFamily = FontFamily.Monospace,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.End,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Button(
+                                            onClick = { onZoomToSegment(seg.meanLatDeg, seg.meanLonDeg) },
+                                            shape = RoundedCornerShape(8.dp),
+                                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                            modifier = Modifier.height(30.dp),
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C3AED))
+                                        ) {
+                                            Text("Zoom on Map", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                                         }
                                     }
                                 }
@@ -777,18 +1137,9 @@ private fun NearbyStationsDialog(
                         }
                     }
                 }
-
-                // Dialog Footer
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    TextButton(onClick = onDismiss) {
-                        Text("Close", fontWeight = FontWeight.Bold)
-                    }
-                }
             }
         }
     }
 }
+
 

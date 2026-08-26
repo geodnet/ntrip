@@ -74,8 +74,10 @@ class LocationFixAggregator(private val context: Context) {
             numSatellites = sentence.numSatellites,
             hdop = sentence.hdop,
             timestampMs = System.currentTimeMillis(),
+            utcTime = sentence.utcTime,
             diffAgeSec = sentence.diffAgeSec,
             diffStationId = sentence.diffStationId,
+            geoidSeparationM = sentence.geoidSeparationM,
         )
     }
 

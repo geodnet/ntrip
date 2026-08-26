@@ -11,3 +11,5 @@ android/*.iml
 android/app/*.iml
 android/captures/
 android/.cxx/
+.idea/
+*.iml

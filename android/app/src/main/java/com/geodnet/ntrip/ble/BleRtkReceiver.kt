@@ -42,9 +42,9 @@ import java.util.ArrayDeque
  * before relying on it.
  */
 @SuppressLint("MissingPermission")
-class BleRtkReceiver(private val context: Context) {
+class BleRtkReceiver(private val context: Context? = null) {
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     private val _state = MutableStateFlow(BleConnectionState())
     val state: StateFlow<BleConnectionState> = _state.asStateFlow()
@@ -78,7 +78,7 @@ class BleRtkReceiver(private val context: Context) {
     private var gatt: BluetoothGatt? = null
     private var rxCharacteristic: BluetoothGattCharacteristic? = null
     private var negotiatedMtu: Int = DEFAULT_MTU
-    private val lineBuffer = StringBuilder()
+    private var rxBuffer = ByteArray(0)
     private val pendingWrites = ArrayDeque<ByteArray>()
     private var writeInFlight = false
 
@@ -88,6 +88,7 @@ class BleRtkReceiver(private val context: Context) {
     private var reconnectAttempt = 0
 
     fun connect(device: BluetoothDevice) {
+        val ctx = context ?: return
         userInitiatedDisconnect = false
         lastDevice = device
         reconnectJob?.cancel()
@@ -98,7 +99,7 @@ class BleRtkReceiver(private val context: Context) {
             deviceName = device.name,
             deviceAddress = device.address,
         )
-        gatt = device.connectGatt(context, false, gattCallback)
+        gatt = device.connectGatt(ctx, false, gattCallback)
     }
 
     fun disconnect() {
@@ -122,7 +123,7 @@ class BleRtkReceiver(private val context: Context) {
         gatt = null
         rxCharacteristic = null
         negotiatedMtu = DEFAULT_MTU
-        lineBuffer.clear()
+        rxBuffer = ByteArray(0)
         pendingWrites.clear()
         writeInFlight = false
     }
@@ -159,7 +160,12 @@ class BleRtkReceiver(private val context: Context) {
             pendingWrites.addLast(data.copyOfRange(offset, end))
             offset = end
         }
-        _state.update { it.copy(bytesToReceiver = it.bytesToReceiver + data.size) }
+        _state.update {
+            it.copy(
+                bytesToReceiver = it.bytesToReceiver + data.size,
+                messagesSent = it.messagesSent + 1
+            )
+        }
         pumpWriteQueue(characteristic)
     }
 
@@ -261,27 +267,114 @@ class BleRtkReceiver(private val context: Context) {
         }
     }
 
-    private fun handleIncoming(bytes: ByteArray) {
+    internal fun handleIncoming(bytes: ByteArray) {
         _state.update { it.copy(bytesFromReceiver = it.bytesFromReceiver + bytes.size) }
         _rawBytes.tryEmit(bytes)
-        lineBuffer.append(String(bytes, Charsets.US_ASCII))
-        while (true) {
-            val newlineIdx = lineBuffer.indexOf("\n")
-            if (newlineIdx < 0) {
-                if (lineBuffer.length > MAX_LINE_BUFFER) lineBuffer.clear() // guard against a runaway buffer
-                break
+
+        rxBuffer = rxBuffer + bytes
+        var i = 0
+        while (i < rxBuffer.size) {
+            val b = rxBuffer[i]
+
+            // 1. NMEA Sentence ($ or !)
+            if (b == '$'.code.toByte() || b == '!'.code.toByte()) {
+                var nl = -1
+                for (j in i until rxBuffer.size) {
+                    if (rxBuffer[j] == '\n'.code.toByte()) {
+                        nl = j
+                        break
+                    }
+                }
+
+                if (nl != -1) {
+                    val lineBytes = rxBuffer.copyOfRange(i, nl)
+                    val line = String(lineBytes, Charsets.US_ASCII).trimEnd('\r')
+                    if (line.isNotBlank()) {
+                        _rawLines.tryEmit(line)
+                        val type = line.substring(1).substringBefore(",").take(5).uppercase()
+                        _state.update {
+                            val counts = it.nmeaCounts.toMutableMap()
+                            counts[type] = (counts[type] ?: 0) + 1
+                            it.copy(messagesReceived = it.messagesReceived + 1, nmeaCounts = counts)
+                        }
+                    }
+                    val sentence = NmeaParser.parse(line)
+                    if (sentence != null) {
+                        _nmeaSentences.tryEmit(sentence)
+                        when (sentence) {
+                            is NmeaSentence.Gga -> _state.update { it.copy(latestFix = sentence) }
+                            is NmeaSentence.Gst -> _state.update { it.copy(latestGst = sentence) }
+                            is NmeaSentence.Gsa -> _state.update { it.copy(latestGsa = sentence) }
+                            else -> Unit
+                        }
+                    }
+                    i = nl + 1
+                } else {
+                    if (rxBuffer.size - i > MAX_LINE_BUFFER) {
+                        i++
+                    } else {
+                        break
+                    }
+                }
             }
-            val line = lineBuffer.substring(0, newlineIdx)
-            lineBuffer.delete(0, newlineIdx + 1)
-            if (line.isNotBlank()) _rawLines.tryEmit(line.trimEnd('\r'))
-            val sentence = NmeaParser.parse(line) ?: continue
-            _nmeaSentences.tryEmit(sentence)
-            when (sentence) {
-                is NmeaSentence.Gga -> _state.update { it.copy(latestFix = sentence) }
-                is NmeaSentence.Gst -> _state.update { it.copy(latestGst = sentence) }
-                is NmeaSentence.Gsa -> _state.update { it.copy(latestGsa = sentence) }
-                else -> Unit
+            // 2. RTCM3 Frame (0xD3 preamble)
+            else if (b == 0xD3.toByte()) {
+                if (rxBuffer.size - i < 3) {
+                    break
+                }
+                val b1 = rxBuffer[i + 1].toInt() and 0xFF
+                val b2 = rxBuffer[i + 2].toInt() and 0xFF
+
+                // Top 6 bits of byte 1 must be 0
+                if ((b1 and 0xFC) != 0) {
+                    i++
+                    continue
+                }
+                val payloadLen = ((b1 and 0x03) shl 8) or b2
+                val frameLen = 3 + payloadLen + 3
+
+                if (rxBuffer.size - i < frameLen) {
+                    if (frameLen > MAX_RTCM_FRAME) {
+                        i++
+                    } else {
+                        break
+                    }
+                } else {
+                    val computedCrc = com.geodnet.ntrip.rtcm.Crc24Q.compute(rxBuffer, i, 3 + payloadLen)
+                    val actualCrc = ((rxBuffer[i + 3 + payloadLen].toInt() and 0xFF) shl 16) or
+                        ((rxBuffer[i + 3 + payloadLen + 1].toInt() and 0xFF) shl 8) or
+                        (rxBuffer[i + 3 + payloadLen + 2].toInt() and 0xFF)
+
+                    if (computedCrc == actualCrc) {
+                        val msgType = if (payloadLen >= 2) {
+                            ((rxBuffer[i + 3].toInt() and 0xFF) shl 4) or ((rxBuffer[i + 4].toInt() and 0xFF) ushr 4)
+                        } else 0
+                        val rtcmKey = "RTCM $msgType"
+                        _state.update {
+                            val rCounts = it.rtcmCounts.toMutableMap()
+                            rCounts[rtcmKey] = (rCounts[rtcmKey] ?: 0) + 1
+                            it.copy(messagesReceived = it.messagesReceived + 1, rtcmCounts = rCounts)
+                        }
+                        i += frameLen
+                    } else {
+                        i++
+                    }
+                }
             }
+            // 3. Noise / spacing byte
+            else {
+                i++
+            }
+        }
+
+        rxBuffer = if (i < rxBuffer.size) {
+            rxBuffer.copyOfRange(i, rxBuffer.size)
+        } else {
+            ByteArray(0)
+        }
+
+        if (rxBuffer.size > MAX_BUFFER) {
+            rxBuffer = ByteArray(0)
         }
     }
 
@@ -290,5 +383,7 @@ class BleRtkReceiver(private val context: Context) {
         private const val MAX_MTU_REQUEST = 517 // Max ATT MTU supported by Android BLE (enables up to 512B payload)
         private const val ATT_WRITE_OVERHEAD = 3 // 1-byte OpCode + 2-byte Handle
         private const val MAX_LINE_BUFFER = 4096
+        private const val MAX_RTCM_FRAME = 1024
+        private const val MAX_BUFFER = 16384
     }
 }

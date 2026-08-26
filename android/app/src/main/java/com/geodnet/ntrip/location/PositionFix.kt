@@ -14,10 +14,13 @@ data class PositionFix(
     val numSatellites: Int,
     val hdop: Double,
     val timestampMs: Long,
+    /** NMEA GGA field 1 (UTC time tag, hhmmss.ss) */
+    val utcTime: String = "",
     /** GGA field 13 (age of differential corrections, seconds) -- 0.0 for a [FixSource.PHONE] fix
      * (no differential concept there) or when the BLE receiver didn't report it. */
     val diffAgeSec: Double = 0.0,
     /** GGA field 14 (differential reference station ID) -- 0 for [FixSource.PHONE] or when
      * unreported; many receivers report 0 even with a valid fix, so treat 0 as "unknown". */
     val diffStationId: Int = 0,
+    val geoidSeparationM: Double = 0.0,
 )

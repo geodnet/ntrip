@@ -2,6 +2,7 @@ package com.geodnet.ntrip.ntrip
 
 import java.time.ZoneOffset
 import java.time.ZonedDateTime
+import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.floor
 
@@ -25,7 +26,7 @@ object GgaGenerator {
         age: Double = 0.0,
     ): String {
         val now = ZonedDateTime.now(ZoneOffset.UTC)
-        val time = "%02d%02d%02d.000".format(now.hour, now.minute, now.second)
+        val time = String.format(Locale.US, "%02d%02d%02d.000", now.hour, now.minute, now.second)
 
         val latDir = if (latitude >= 0) "N" else "S"
         val lonDir = if (longitude >= 0) "E" else "W"
@@ -39,11 +40,14 @@ object GgaGenerator {
         val latMin = (latAbs - latDeg) * 60.0
         val lonMin = (lonAbs - lonDeg) * 60.0
 
-        val latStr = "%02d%07.4f".format(latDeg, latMin)
-        val lonStr = "%03d%07.4f".format(lonDeg, lonMin)
+        val latStr = String.format(Locale.US, "%02d%07.4f", latDeg, latMin)
+        val lonStr = String.format(Locale.US, "%03d%07.4f", lonDeg, lonMin)
 
-        val gga = "\$GPGGA,$time,$latStr,$latDir,$lonStr,$lonDir,1," +
-            "$numSatellites,%.2f,%.2f,M,0.0,M,%.2f,$staId".format(hdop, altitude, age)
+        val gga = String.format(
+            Locale.US,
+            "\$GPGGA,%s,%s,%s,%s,%s,1,%d,%.2f,%.2f,M,0.0,M,%.2f,%d",
+            time, latStr, latDir, lonStr, lonDir, numSatellites, hdop, altitude, age, staId
+        )
         val checksum = checksum(gga)
         return "$gga*${checksum.toString(16).uppercase().padStart(2, '0')}"
     }

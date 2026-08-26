@@ -13,6 +13,7 @@ data class NtripConfig(
     val numSatellites: Int = 20,
     val hdop: Double = 1.0,
     val ggaIntervalMs: Long = 5000L,
+    val useLiveLocation: Boolean = true,
 )
 
 /** Overrides [NtripConfig]'s static lat/lon/alt/numSatellites/hdop for one GGA upload with a live

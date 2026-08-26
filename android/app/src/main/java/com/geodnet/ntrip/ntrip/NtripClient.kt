@@ -40,11 +40,11 @@ class NtripClient(
     private val livePosition: (() -> GgaPositionOverride?)? = null,
 ) {
 
-    private val _state = MutableStateFlow(NtripState())
+    private val _state = MutableStateFlow(NtripState(status = NtripStatus.CONNECTING))
     val state: StateFlow<NtripState> = _state.asStateFlow()
 
     private val rtcmParser = RtcmFrameParser {
-        val live = livePosition?.invoke()
+        val live = if (config.useLiveLocation) livePosition?.invoke() else null
         if (live != null) Triple(live.latitude, live.longitude, live.altitudeM)
         else Triple(config.latitude, config.longitude, config.altitude)
     }
@@ -79,7 +79,16 @@ class NtripClient(
 
             _state.update { it.copy(status = NtripStatus.CONNECTED) }
 
-            val ggaJob = if (config.ggaIntervalMs > 0) launch { ggaUploadLoop() } else null
+            val ggaJob = if (config.ggaIntervalMs > 0) {
+                launch {
+                    sendGga()
+                    while (isActive) {
+                        delay(config.ggaIntervalMs)
+                        sendGga()
+                    }
+                }
+            } else null
+
             try {
                 readLoop()
             } finally {
@@ -88,7 +97,7 @@ class NtripClient(
         } catch (e: CancellationException) {
             throw e
         } catch (e: IOException) {
-            _state.update { it.copy(status = NtripStatus.ERROR, errorMessage = e.message) }
+            _state.update { it.copy(status = NtripStatus.ERROR, errorMessage = e.message ?: "Connection error") }
         } finally {
             closeSocket()
             _state.update {
@@ -112,9 +121,10 @@ class NtripClient(
     }
 
     private fun sendRequest() {
+        val cleanMount = config.mountpoint.trim().removePrefix("/").ifBlank { "AUTO" }
         val credentials = "${config.username}:${config.password}"
         val auth = Base64.getEncoder().encodeToString(credentials.toByteArray(Charsets.UTF_8))
-        val request = "GET /${config.mountpoint} HTTP/1.0\r\n" +
+        val request = "GET /$cleanMount HTTP/1.0\r\n" +
             "User-Agent: $USER_AGENT\r\n" +
             "Authorization: Basic $auth\r\n\r\n"
         socket?.getOutputStream()?.apply {
@@ -123,37 +133,59 @@ class NtripClient(
         }
     }
 
-    private suspend fun ggaUploadLoop() {
-        while (true) {
-            delay(config.ggaIntervalMs)
-            val isAutoMountpoint = config.mountpoint.isBlank() || config.mountpoint.equals("AUTO", ignoreCase = true)
-            val live = if (isAutoMountpoint) livePosition?.invoke() else null
-            val sentence = (
-                if (live != null) {
-                    GgaGenerator.generate(live.latitude, live.longitude, live.altitudeM, live.numSatellites, live.hdop)
-                } else {
-                    GgaGenerator.generate(config)
-                }
-                ) + "\r\n"
-            withContext(Dispatchers.IO) {
-                try {
-                    socket?.getOutputStream()?.apply {
-                        write(sentence.toByteArray(Charsets.US_ASCII))
-                        flush()
-                    }
-                } catch (_: IOException) {
-                    // let readLoop observe the same failure and report it
-                }
+    private suspend fun sendGga() = withContext(Dispatchers.IO) {
+        val cleanMount = config.mountpoint.trim().removePrefix("/").ifBlank { "AUTO" }
+        val isAutoMountpoint = cleanMount.startsWith("AUTO", ignoreCase = true)
+        val live = if (isAutoMountpoint && config.useLiveLocation) livePosition?.invoke() else null
+        val sentence = (
+            if (live != null) {
+                GgaGenerator.generate(live.latitude, live.longitude, live.altitudeM, live.numSatellites, live.hdop)
+            } else {
+                GgaGenerator.generate(config)
             }
+            ) + "\r\n"
+        try {
+            socket?.getOutputStream()?.apply {
+                write(sentence.toByteArray(Charsets.US_ASCII))
+                flush()
+            }
+        } catch (_: IOException) {
+            // let readLoop observe the same failure and report it
         }
     }
 
     private suspend fun readLoop() = withContext(Dispatchers.IO) {
         val input = socket?.getInputStream() ?: return@withContext
         val buffer = ByteArray(4096)
+        var firstChunk = true
         while (isActive) {
             val n = input.read(buffer)
             if (n < 0) break
+            if (firstChunk) {
+                firstChunk = false
+                val preview = String(buffer, 0, n.coerceAtMost(256), Charsets.US_ASCII)
+                if (preview.startsWith("HTTP/") || preview.startsWith("ICY ") || preview.startsWith("SOURCETABLE")) {
+                    val statusLine = preview.lines().firstOrNull() ?: ""
+                    val isOk = statusLine.contains("200") || statusLine.contains("OK")
+                    if (preview.startsWith("SOURCETABLE")) {
+                        _state.update {
+                            it.copy(
+                                status = NtripStatus.ERROR,
+                                errorMessage = "Caster returned sourcetable instead of stream (check mountpoint)"
+                            )
+                        }
+                        return@withContext
+                    } else if (!isOk) {
+                        _state.update {
+                            it.copy(
+                                status = NtripStatus.ERROR,
+                                errorMessage = "Caster response: $statusLine".trim()
+                            )
+                        }
+                        return@withContext
+                    }
+                }
+            }
             _state.update { it.copy(bytesReceived = it.bytesReceived + n) }
             rtcmParser.feed(buffer, n)
             _rawBytes.tryEmit(buffer.copyOf(n))

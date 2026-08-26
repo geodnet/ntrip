@@ -15,12 +15,16 @@ than silent omission:
 - Ntrip caster connection, GGA upload (now using a **live** BLE-else-phone position, not a static
   configured one — see `location/LocationFixAggregator` and `NtripClient`'s `livePosition` param),
   credentials persistence, and GNSS ephemeris filtering before BLE forwarding.
-- A real-time RTCM 3.x inspector: message decoding, live log, per-type counts, and an epoch
+- **GEODNET Regional Geodetic Coordinate System (RGCS) Resolver** (`data/GeodnetDatumResolver.kt`):
+  resolves dynamic datums for `AUTO` and explicit mountpoints (`AUTO_ITRF2020`, `AUTO_WGS84`,
+  `NATRF2020`, `SIRGAS2000`, etc.) matching `geodnet.github.io/rtk` specifications.
+- A real-time RTCM 3.x inspector: message decoding, compact MSM live log, per-type counts, and an epoch
   latency/span engine (`rtcm/EpochLatencyEngine`).
-- BLE RTK receiver integration (NUS scan/connect, NMEA parsing including GSA for PDOP/VDOP,
-  bidirectional RTCM forwarding with optional ephemeris filtering).
-- An offline Leaflet map: base-station/baseline toggle, persistent trajectory, static-segment
-  auto-detection.
+- BLE RTK receiver integration (NUS scan/connect, NMEA parsing including GSA/GST/GGA, **mixed binary
+  RTCM3 and ASCII NMEA** dual stream parsing with CRC-24Q validation and per-type message tallies).
+- An offline Leaflet map: base-station/baseline toggle, persistent trajectory, active base station
+  matching & green highlight (`#10b981`), live 2D adaptive **static-segment auto-detection**
+  (`location/StaticSegmentDetector.kt`), and manual zoom/pan gesture pause handling.
 - An Android mock location provider and NMEA/RTCM TCP servers for local GIS app integration.
 - The Dual Data Logger: a raw binary stream logger (caster RTCM + BLE raw bytes) and an Android
   GNSS raw measurement/navigation-message/IMU logger (`logging/`).

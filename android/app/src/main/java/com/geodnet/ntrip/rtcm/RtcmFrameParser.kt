@@ -169,8 +169,30 @@ class RtcmFrameParser(private val refPosition: () -> Triple<Double, Double, Doub
         val summary = describeFrameDetail(msgType, payload)
         if (msgType == 1005 || msgType == 1006) updateBaseStation(msgType, payload, now)
         _frames.tryEmit(RtcmFrame(msgType, frame))
-        if (msgType in LEGACY_OBSERVATION_TYPES || getMsmSystem(msgType) != null) {
-            epochEngine.onObservationMessage()
+
+        val msmSys = getMsmSystem(msgType)
+        if (msgType in LEGACY_OBSERVATION_TYPES || msmSys != null) {
+            var baseTimeTagUtcSec: Double? = null
+            var staId: Int? = null
+            if (msmSys != null) {
+                try {
+                    val h = MsmHeaderDecoder.decode(payload, msmSys)
+                    staId = h.staId
+                    baseTimeTagUtcSec = when {
+                        h.glonassTodSec != null -> {
+                            (h.glonassTodSec - 3.0 * 3600.0).mod(86400.0)
+                        }
+                        h.towSec != null -> {
+                            val gpstSod = h.towSec % 86400.0
+                            (gpstSod - 18.0).mod(86400.0)
+                        }
+                        else -> null
+                    }
+                } catch (_: Exception) {
+                    // Ignore decode errors
+                }
+            }
+            epochEngine.onObservationMessage(baseTimeTagUtcSec = baseTimeTagUtcSec, staId = staId)
             _epochStats.value = epochEngine.snapshot()
         }
 
@@ -254,11 +276,11 @@ class RtcmFrameParser(private val refPosition: () -> Triple<Double, Double, Doub
                 if (sys != null) {
                     val h = MsmHeaderDecoder.decode(payload, sys)
                     val epochStr = if (h.glonassDow != null) {
-                        "dow=${h.glonassDow} tod=%.3f".format(h.glonassTodSec)
+                        "tod=%.1fs".format(h.glonassTodSec)
                     } else {
-                        "tow=%.3f".format(h.towSec)
+                        "tow=%.1fs".format(h.towSec)
                     }
-                    "staid=${h.staId} sys=${sys.name} $epochStr nsat=${h.nsat} nsig=${h.nsig} sig=[${h.sigNames.joinToString(",")}]"
+                    "#${h.staId} $epochStr ${h.nsat}sv/${h.nsig}sig [${h.sigNames.joinToString(",")}]"
                 } else {
                     ""
                 }

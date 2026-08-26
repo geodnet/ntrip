@@ -124,6 +124,7 @@ fun NtripScreen(viewModel: NtripViewModel) {
     val sourcetable by viewModel.sourcetable.collectAsState()
     val isSourcetableLoading by viewModel.isSourcetableLoading.collectAsState()
     val sourcetableError by viewModel.sourcetableError.collectAsState()
+    val baseStation by viewModel.baseStation.collectAsState()
 
     var showSettingsDialog by remember { mutableStateOf(false) }
     var showSourcetableDialog by remember { mutableStateOf(false) }
@@ -140,6 +141,16 @@ fun NtripScreen(viewModel: NtripViewModel) {
     var latitude by remember(config.latitude) { mutableStateOf(config.latitude.toString()) }
     var longitude by remember(config.longitude) { mutableStateOf(config.longitude.toString()) }
 
+    LaunchedEffect(config) {
+        host = config.host
+        port = config.port.toString()
+        mountpoint = config.mountpoint
+        username = config.username
+        password = config.password
+        latitude = config.latitude.toString()
+        longitude = config.longitude.toString()
+    }
+
     val isConnected = connectionState.status == NtripStatus.CONNECTED ||
         connectionState.status == NtripStatus.CONNECTING
 
@@ -152,10 +163,6 @@ fun NtripScreen(viewModel: NtripViewModel) {
         latitude = latitude.toDoubleOrNull() ?: config.latitude,
         longitude = longitude.toDoubleOrNull() ?: config.longitude,
     )
-
-    LaunchedEffect(isConnected) {
-        if (isConnected) showSettingsDialog = false
-    }
 
     Scaffold(
         topBar = {
@@ -188,11 +195,9 @@ fun NtripScreen(viewModel: NtripViewModel) {
                 config = config,
                 connectionState = connectionState,
                 isConnected = isConnected,
+                bestFix = bestFix,
                 onOpenSettings = { showSettingsDialog = true },
-                onConnect = {
-                    viewModel.updateConfig(currentConfig())
-                    viewModel.connect()
-                },
+                onConnect = { viewModel.connect() },
                 onDisconnect = { viewModel.disconnect() },
             )
 
@@ -202,6 +207,7 @@ fun NtripScreen(viewModel: NtripViewModel) {
                 bleDevices = bleDevices,
                 bleIsScanning = bleIsScanning,
                 filterEphemeris = filterEphemerisForBle,
+                epochStats = epochStats,
                 onStartScan = { viewModel.startBleScan() },
                 onStopScan = { viewModel.stopBleScan() },
                 onConnectDevice = { viewModel.connectBleDevice(it) },
@@ -213,14 +219,10 @@ fun NtripScreen(viewModel: NtripViewModel) {
             GeodnetCoverageCard(
                 nearbyStations = nearbyStations,
                 isLoading = isCoverageLoading,
-                currentMountpoint = config.mountpoint,
-                onRefresh = { viewModel.refreshCoverageStations() },
-                onSelectMountpoint = { selectedMountpoint, selectedLat, selectedLon ->
-                    mountpoint = selectedMountpoint
-                    latitude = selectedLat.toString()
-                    longitude = selectedLon.toString()
-                    viewModel.applyMountpoint(selectedMountpoint, selectedLat, selectedLon)
-                }
+                baseStation = baseStation,
+                epochStats = epochStats,
+                diffStationId = bestFix?.diffStationId,
+                onRefresh = { viewModel.refreshCoverageStations() }
             )
 
             // 4. RTCM Inspector & Epoch Latency Card
@@ -352,6 +354,7 @@ private fun HeroConnectionCard(
     config: NtripConfig,
     connectionState: NtripState,
     isConnected: Boolean,
+    bestFix: com.geodnet.ntrip.location.PositionFix? = null,
     onOpenSettings: () -> Unit,
     onConnect: () -> Unit,
     onDisconnect: () -> Unit,
@@ -361,6 +364,15 @@ private fun HeroConnectionCard(
         NtripStatus.CONNECTING -> SurveyColors.Connecting
         NtripStatus.ERROR -> SurveyColors.Error
         NtripStatus.DISCONNECTED -> SurveyColors.Disconnected
+    }
+
+    val datum = remember(config.mountpoint, config.host, bestFix?.latitude, bestFix?.longitude) {
+        com.geodnet.ntrip.data.GeodnetDatumResolver.resolve(
+            mountpoint = config.mountpoint,
+            host = config.host,
+            lat = bestFix?.latitude,
+            lon = bestFix?.longitude
+        )
     }
 
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
@@ -430,25 +442,53 @@ private fun HeroConnectionCard(
                 }
             }
 
-            // Stream endpoint box
+            // Stream endpoint box with Coordinate System
             Surface(
                 shape = RoundedCornerShape(10.dp),
                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Text(
-                        text = "CASTER MOUNTPOINT",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                        fontWeight = FontWeight.SemiBold
-                    )
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "CASTER MOUNTPOINT",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+                        ) {
+                            Text(
+                                text = datum.name,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                fontSize = 10.sp
+                            )
+                        }
+                    }
                     Text(
                         text = "${config.host}:${config.port}/${config.mountpoint.ifBlank { "—" }}",
                         fontFamily = FontFamily.Monospace,
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Medium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "Datum: ${datum.name} • Epoch: ${datum.epoch} (${datum.region})",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.SemiBold
                     )
                 }
             }
@@ -486,13 +526,13 @@ private fun HeroConnectionCard(
                     ) {
                         Text("Connect", fontWeight = FontWeight.SemiBold)
                     }
-                    OutlinedButton(
-                        onClick = onOpenSettings,
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(10.dp)
-                    ) {
-                        Text("Settings & Profiles", fontWeight = FontWeight.SemiBold)
-                    }
+                }
+                OutlinedButton(
+                    onClick = onOpenSettings,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text("Settings & Profiles", fontWeight = FontWeight.SemiBold)
                 }
             }
         }
@@ -506,6 +546,7 @@ private fun BleReceiverCard(
     bleDevices: List<BleDeviceInfo>,
     bleIsScanning: Boolean,
     filterEphemeris: Boolean,
+    epochStats: com.geodnet.ntrip.rtcm.EpochLatencyStats,
     onStartScan: () -> Unit,
     onStopScan: () -> Unit,
     onConnectDevice: (String) -> Unit,
@@ -548,14 +589,14 @@ private fun BleReceiverCard(
                     fontFamily = FontFamily.Monospace
                 )
 
-                // Throughput counters & MTU size
+                // Throughput counters & MTU size & Message counts
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        "↓ RX: ${formatBytes(bleState.bytesFromReceiver.toLong())}",
+                        "↓ RX: ${formatBytes(bleState.bytesFromReceiver.toLong())} (${bleState.messagesReceived} msgs)",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -573,10 +614,75 @@ private fun BleReceiverCard(
                         )
                     }
                     Text(
-                        "↑ TX: ${formatBytes(bleState.bytesToReceiver.toLong())}",
+                        "↑ TX: ${formatBytes(bleState.bytesToReceiver.toLong())} (${bleState.messagesSent} pkts)",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                }
+
+                // NMEA Sentences & RTCM Messages Decoded Breakdown
+                if (bleState.nmeaCounts.isNotEmpty() || bleState.rtcmCounts.isNotEmpty()) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        bleState.nmeaCounts.toSortedMap().forEach { (type, count) ->
+                            Surface(
+                                shape = RoundedCornerShape(4.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                ) {
+                                    Text(
+                                        text = type,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontSize = 10.sp
+                                    )
+                                    Text(
+                                        text = "×$count",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontSize = 10.sp
+                                    )
+                                }
+                            }
+                        }
+
+                        bleState.rtcmCounts.toSortedMap().forEach { (type, count) ->
+                            Surface(
+                                shape = RoundedCornerShape(4.dp),
+                                color = SurveyColors.Connected.copy(alpha = 0.15f),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, SurveyColors.Connected.copy(alpha = 0.5f))
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                ) {
+                                    Text(
+                                        text = type,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = SurveyColors.Connected,
+                                        fontSize = 10.sp
+                                    )
+                                    Text(
+                                        text = "×$count",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontSize = 10.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
 
                 // GNSS Fix telemetry banner
@@ -592,6 +698,33 @@ private fun BleReceiverCard(
                             text = "Sats: ${fix.numSatellites}",
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    // Differential Base ID, Correction Age (GGA field 13), and Latency (Rover time tag - Base time tag)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        val baseStationId = if (fix.diffStationId != 0) fix.diffStationId else epochStats.baseStationId
+                        TelemetryTile(
+                            title = "BASE ID",
+                            value = baseStationId?.let { "#$it" } ?: "—",
+                            modifier = Modifier.weight(1f)
+                        )
+                        TelemetryTile(
+                            title = "AGE (GGA)",
+                            value = if (fix.diffAgeSec > 0.0) "%.1fs".format(fix.diffAgeSec) else "—",
+                            modifier = Modifier.weight(1f)
+                        )
+                        val latencySec = com.geodnet.ntrip.rtcm.TimeTagMath.calculateLatencySec(
+                            roverGgaUtcTime = fix.utcTime,
+                            baseTimeTagUtcSec = epochStats.lastBaseTimeTagUtcSec
+                        ) ?: (epochStats.lastMessageAgeMs.takeIf { it > 0 }?.let { it / 1000.0 })
+                        TelemetryTile(
+                            title = "LATENCY",
+                            value = latencySec?.let { "%.1fs".format(it) } ?: "—",
+                            modifier = Modifier.weight(1f)
                         )
                     }
 
@@ -809,13 +942,21 @@ private fun RtcmInspectorCard(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("EPOCH LATENCY & SPAN", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("EPOCH LATENCY & TIME TAG", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                        epochStats.baseStationId?.let {
+                            Text("Base #$it", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        }
+                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            "First Latency: ${epochStats.firstMessageLatencyMs?.let { "${it}ms" } ?: "—"}",
+                            "Base Time Tag: ${epochStats.lastBaseTimeTagUtcSec?.let { "%.2fs UTC".format(it) } ?: "—"}",
                             style = MaterialTheme.typography.bodySmall
                         )
                         Text(
@@ -823,11 +964,21 @@ private fun RtcmInspectorCard(
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
-                    Text(
-                        "Last Message Age: ${epochStats.lastMessageAgeMs}ms",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            "First Latency: ${epochStats.firstMessageLatencyMs?.let { "${it}ms" } ?: "—"}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            "Arrival Age: ${epochStats.lastMessageAgeMs}ms",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
 
@@ -1097,27 +1248,28 @@ private fun RtcmLiveLogCard(
 private fun RtcmLogRow(message: RtcmMessage) {
     val color = if (!message.crcOk) SurveyColors.Error else getRtcmConstellationColor(message.msgKey)
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp)
+        modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
-            text = message.msgKey.padEnd(6),
+            text = message.msgKey.padEnd(5),
             color = color,
             fontWeight = FontWeight.Bold,
             fontFamily = FontFamily.Monospace,
             fontSize = 11.sp
         )
         Text(
-            text = "${message.lengthBytes}B",
+            text = "${message.lengthBytes}B".padStart(4),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             fontFamily = FontFamily.Monospace,
-            fontSize = 11.sp
+            fontSize = 10.5.sp
         )
         Text(
             text = message.summary,
             color = MaterialTheme.colorScheme.onSurface,
             fontFamily = FontFamily.Monospace,
-            fontSize = 11.sp,
+            fontSize = 10.5.sp,
             modifier = Modifier.weight(1f)
         )
     }
@@ -1476,7 +1628,6 @@ private fun ProfileItem(
         }
     }
 }
-
 /**
  * Modern GEODNET Base Station Network Discovery & Nearest Station Assistant Card.
  */
@@ -1484,10 +1635,39 @@ private fun ProfileItem(
 private fun GeodnetCoverageCard(
     nearbyStations: List<NearbyStation>,
     isLoading: Boolean,
-    currentMountpoint: String,
+    baseStation: com.geodnet.ntrip.rtcm.BaseStationFix?,
+    epochStats: com.geodnet.ntrip.rtcm.EpochLatencyStats,
+    diffStationId: Int?,
     onRefresh: () -> Unit,
-    onSelectMountpoint: (String, Double, Double) -> Unit
 ) {
+    fun isStationMatched(st: NearbyStation): Boolean {
+        // 1. Strict Physical Coordinate Match from RTCM 1005/1006 (within 500 meters)
+        if (baseStation != null && (baseStation.latDeg != 0.0 || baseStation.lonDeg != 0.0)) {
+            val distKm = com.geodnet.ntrip.data.GeodnetCoverageRepository.haversineDistanceKm(
+                st.lat, st.lng, baseStation.latDeg, baseStation.lonDeg
+            )
+            return distKm < 0.5
+        }
+
+        // 2. Exact Numeric Station ID Match (only when coordinates are not yet available)
+        val validIds = listOfNotNull(
+            baseStation?.staId?.takeIf { it > 0 },
+            epochStats.baseStationId?.takeIf { it > 0 },
+            diffStationId?.takeIf { it > 0 }
+        )
+
+        if (validIds.isEmpty()) return false
+
+        val stNumericId = st.shortName.toIntOrNull()
+            ?: st.name.filter { it.isDigit() }.toIntOrNull()
+
+        if (stNumericId != null && stNumericId > 0) {
+            return validIds.any { it == stNumericId }
+        }
+
+        return false
+    }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -1547,8 +1727,7 @@ private fun GeodnetCoverageCard(
 
             if (nearbyStations.isNotEmpty()) {
                 val nearest = nearbyStations.first()
-                val isNearestActive = currentMountpoint.equals(nearest.name, ignoreCase = true) ||
-                    currentMountpoint.equals(nearest.shortName, ignoreCase = true)
+                val isNearestMatched = isStationMatched(nearest)
                 val (qualityLabel, qualityColor) = when {
                     nearest.distanceKm <= 25.0 -> "OPTIMAL RTK (<25km)" to SurveyColors.RtkFixed
                     nearest.distanceKm <= 50.0 -> "EXTENDED RTK (25-50km)" to SurveyColors.RtkFloat
@@ -1558,8 +1737,11 @@ private fun GeodnetCoverageCard(
                 // Nearest Station Hero Box
                 Surface(
                     shape = RoundedCornerShape(12.dp),
-                    color = qualityColor.copy(alpha = 0.08f),
-                    border = androidx.compose.foundation.BorderStroke(1.5.dp, qualityColor.copy(alpha = 0.6f)),
+                    color = if (isNearestMatched) SurveyColors.Connected.copy(alpha = 0.12f) else qualityColor.copy(alpha = 0.08f),
+                    border = androidx.compose.foundation.BorderStroke(
+                        if (isNearestMatched) 2.dp else 1.5.dp,
+                        if (isNearestMatched) SurveyColors.Connected else qualityColor.copy(alpha = 0.6f)
+                    ),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(
@@ -1595,20 +1777,37 @@ private fun GeodnetCoverageCard(
                                 )
                             }
 
-                            // Quality Badge
-                            Surface(
-                                shape = RoundedCornerShape(6.dp),
-                                color = qualityColor.copy(alpha = 0.2f),
-                                border = androidx.compose.foundation.BorderStroke(1.dp, qualityColor)
-                            ) {
-                                Text(
-                                    text = qualityLabel,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = qualityColor,
-                                    fontSize = 10.sp
-                                )
+                            // Quality or Active RTCM Badge
+                            if (isNearestMatched) {
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = SurveyColors.Connected.copy(alpha = 0.2f),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, SurveyColors.Connected)
+                                ) {
+                                    Text(
+                                        text = "ACTIVE BASE ✓",
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = SurveyColors.Connected,
+                                        fontSize = 11.sp
+                                    )
+                                }
+                            } else {
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = qualityColor.copy(alpha = 0.2f),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, qualityColor)
+                                ) {
+                                    Text(
+                                        text = qualityLabel,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = qualityColor,
+                                        fontSize = 10.sp
+                                    )
+                                }
                             }
                         }
 
@@ -1623,30 +1822,6 @@ private fun GeodnetCoverageCard(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontFamily = FontFamily.Monospace
                             )
-
-                            if (isNearestActive) {
-                                Surface(
-                                    shape = RoundedCornerShape(6.dp),
-                                    color = SurveyColors.Connected.copy(alpha = 0.15f)
-                                ) {
-                                    Text(
-                                        "Active Base ✓",
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = SurveyColors.Connected
-                                    )
-                                }
-                            } else {
-                                Button(
-                                    onClick = { onSelectMountpoint(nearest.name, nearest.lat, nearest.lng) },
-                                    shape = RoundedCornerShape(8.dp),
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                    modifier = Modifier.height(32.dp)
-                                ) {
-                                    Text("Switch Base", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
-                                }
-                            }
                         }
                     }
                 }
@@ -1660,40 +1835,20 @@ private fun GeodnetCoverageCard(
                         modifier = Modifier.fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                "OTHER NEARBY BASE STATIONS (${nearbyStations.size - 1})",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                letterSpacing = 0.5.sp
-                            )
-                            if (nearbyStations.size > 5) {
-                                TextButton(
-                                    onClick = { expandedList = !expandedList },
-                                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
-                                    modifier = Modifier.height(24.dp)
-                                ) {
-                                    Text(
-                                        if (expandedList) "Collapse" else "View All ${nearbyStations.size}",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-                            }
-                        }
+                        Text(
+                            "OTHER NEARBY BASE STATIONS (${nearbyStations.size - 1})",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            letterSpacing = 0.5.sp
+                        )
 
                         displayList.forEach { st ->
-                            val isStActive = currentMountpoint.equals(st.name, ignoreCase = true) ||
-                                currentMountpoint.equals(st.shortName, ignoreCase = true)
+                            val isStMatched = isStationMatched(st)
                             Surface(
                                 shape = RoundedCornerShape(8.dp),
-                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                                color = if (isStMatched) SurveyColors.Connected.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                                border = if (isStMatched) androidx.compose.foundation.BorderStroke(1.5.dp, SurveyColors.Connected) else null,
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Row(
@@ -1723,21 +1878,19 @@ private fun GeodnetCoverageCard(
                                         )
                                     }
 
-                                    if (isStActive) {
-                                        Text(
-                                            "Active Base ✓",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            fontWeight = FontWeight.Bold,
-                                            color = SurveyColors.Connected
-                                        )
-                                    } else {
-                                        OutlinedButton(
-                                            onClick = { onSelectMountpoint(st.name, st.lat, st.lng) },
-                                            shape = RoundedCornerShape(6.dp),
-                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                            modifier = Modifier.height(28.dp)
+                                    if (isStMatched) {
+                                        Surface(
+                                            shape = RoundedCornerShape(4.dp),
+                                            color = SurveyColors.Connected.copy(alpha = 0.15f),
+                                            border = androidx.compose.foundation.BorderStroke(1.dp, SurveyColors.Connected)
                                         ) {
-                                            Text("Switch Base", style = MaterialTheme.typography.labelSmall)
+                                            Text(
+                                                "ACTIVE BASE ✓",
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = SurveyColors.Connected
+                                            )
                                         }
                                     }
                                 }

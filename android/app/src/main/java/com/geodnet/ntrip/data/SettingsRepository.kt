@@ -33,6 +33,7 @@ class SettingsRepository(private val context: Context) {
         val LONGITUDE = doublePreferencesKey("longitude")
         val ALTITUDE = doublePreferencesKey("altitude")
         val GGA_INTERVAL_MS = longPreferencesKey("gga_interval_ms")
+        val USE_LIVE_LOCATION = booleanPreferencesKey("use_live_location")
         val MOCK_LOCATION_ENABLED = booleanPreferencesKey("mock_location_enabled")
         val NMEA_SERVER_ENABLED = booleanPreferencesKey("nmea_server_enabled")
         val RTCM_SERVER_ENABLED = booleanPreferencesKey("rtcm_server_enabled")
@@ -54,6 +55,7 @@ class SettingsRepository(private val context: Context) {
             longitude = prefs[Keys.LONGITUDE] ?: defaults.longitude,
             altitude = prefs[Keys.ALTITUDE] ?: defaults.altitude,
             ggaIntervalMs = prefs[Keys.GGA_INTERVAL_MS] ?: defaults.ggaIntervalMs,
+            useLiveLocation = prefs[Keys.USE_LIVE_LOCATION] ?: defaults.useLiveLocation,
         )
     }
 
@@ -68,18 +70,19 @@ class SettingsRepository(private val context: Context) {
             prefs[Keys.LONGITUDE] = config.longitude
             prefs[Keys.ALTITUDE] = config.altitude
             prefs[Keys.GGA_INTERVAL_MS] = config.ggaIntervalMs
+            prefs[Keys.USE_LIVE_LOCATION] = config.useLiveLocation
         }
     }
 
     val outputSettingsFlow: Flow<OutputSettings> = context.dataStore.data.map { prefs ->
         OutputSettings(
             mockLocationEnabled = prefs[Keys.MOCK_LOCATION_ENABLED] ?: false,
-            nmeaServerEnabled = prefs[Keys.NMEA_SERVER_ENABLED] ?: false,
-            rtcmServerEnabled = prefs[Keys.RTCM_SERVER_ENABLED] ?: false,
+            nmeaServerEnabled = prefs[Keys.NMEA_SERVER_ENABLED] ?: true,
+            rtcmServerEnabled = prefs[Keys.RTCM_SERVER_ENABLED] ?: true,
             showBaseStation = prefs[Keys.SHOW_BASE_STATION] ?: false,
-            filterEphemerisForBle = prefs[Keys.FILTER_EPHEMERIS_FOR_BLE] ?: false,
-            rawLoggingEnabled = prefs[Keys.RAW_LOGGING_ENABLED] ?: false,
-            gnssRawLoggingEnabled = prefs[Keys.GNSS_RAW_LOGGING_ENABLED] ?: false,
+            filterEphemerisForBle = prefs[Keys.FILTER_EPHEMERIS_FOR_BLE] ?: true,
+            rawLoggingEnabled = prefs[Keys.RAW_LOGGING_ENABLED] ?: true,
+            gnssRawLoggingEnabled = prefs[Keys.GNSS_RAW_LOGGING_ENABLED] ?: true,
         )
     }
 

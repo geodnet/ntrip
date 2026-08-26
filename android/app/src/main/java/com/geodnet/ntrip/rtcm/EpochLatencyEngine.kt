@@ -13,27 +13,15 @@ data class EpochLatencyStats(
     /** Observation messages seen so far in the epoch batch still in progress. */
     val epochMessageCount: Int = 0,
     val epochsCompleted: Long = 0,
+    /** Base station observation epoch time tag (UTC seconds of day: 0..86399.999), decoded from RTCM MSM. */
+    val lastBaseTimeTagUtcSec: Double? = null,
+    /** Base station ID decoded from RTCM observation frames. */
+    val baseStationId: Int? = null,
 )
 
 /**
  * Tracks arrival-time latency/epoch-span metrics for observation-carrying RTCM messages (MSM /
  * legacy 100x), per readme.md's "Sub-Millisecond Epoch Span & Latency Engine".
- *
- * **This does not implement the readme's literal "20-bit MSM TOW modulo matching"**: correlating
- * each message's own decoded epoch-time field across constellations that use different GNSS time
- * scales (GPS/GLONASS/Galileo/BeiDou each have their own epoch/leap-second conventions) is a
- * substantially harder problem than what's implemented here, and RTCM MSM TOW fields are actually
- * ~30 bits (enough to cover a full GPS week in milliseconds) in every MSM variant this app
- * decodes -- not 20 -- so there's no real 20-bit field to match on. Reimplementing that literally
- * would mean guessing at a scheme rather than porting a known-correct one, which conflicts with
- * this codebase's usual bar of verifying RTCM bit-level decode logic (see rtcm/CLAUDE.md-style
- * notes elsewhere in this file's siblings). Instead, "epoch" here means a *burst of observation
- * messages that arrive close together in real arrival time* -- a new epoch starts whenever the gap
- * since the last observation message exceeds [epochGapNanos] (default 200ms, comfortably longer
- * than the sub-second burst of MSM frames for one real epoch, comfortably shorter than the gap
- * between one epoch's burst and the next at any normal GGA/reporting interval). This still
- * produces the exact Δt_epoch = t_last - t_first the readme asks for, just correlated by arrival
- * time rather than by decoding and cross-referencing each system's own epoch field.
  */
 class EpochLatencyEngine(private val epochGapNanos: Long = DEFAULT_EPOCH_GAP_NANOS) {
 
@@ -42,6 +30,8 @@ class EpochLatencyEngine(private val epochGapNanos: Long = DEFAULT_EPOCH_GAP_NAN
     private var lastMessageAtNanos: Long? = null
     private var lastEpochSpanMs: Double? = null
     private var epochsCompleted: Long = 0
+    private var lastBaseTimeTagUtcSec: Double? = null
+    private var baseStationId: Int? = null
 
     private var epochStartNanos: Long = 0
     private var epochLastNanos: Long = 0
@@ -54,12 +44,22 @@ class EpochLatencyEngine(private val epochGapNanos: Long = DEFAULT_EPOCH_GAP_NAN
     }
 
     /** Call for every observation-carrying message (MSM / legacy 100x) as it arrives. */
-    fun onObservationMessage(nowNanos: Long = System.nanoTime()) {
+    fun onObservationMessage(
+        nowNanos: Long = System.nanoTime(),
+        baseTimeTagUtcSec: Double? = null,
+        staId: Int? = null,
+    ) {
         if (firstMessageLatencyMs == null) {
             val start = connectionStartNanos
             firstMessageLatencyMs = if (start != null) (nowNanos - start) / NANOS_PER_MS else 0
         }
         lastMessageAtNanos = nowNanos
+        if (baseTimeTagUtcSec != null) {
+            lastBaseTimeTagUtcSec = baseTimeTagUtcSec
+        }
+        if (staId != null && staId != 0) {
+            baseStationId = staId
+        }
 
         if (epochMessageCount == 0 || nowNanos - epochLastNanos > epochGapNanos) {
             if (epochMessageCount > 0) closeEpoch()
@@ -81,6 +81,8 @@ class EpochLatencyEngine(private val epochGapNanos: Long = DEFAULT_EPOCH_GAP_NAN
         lastEpochSpanMs = lastEpochSpanMs,
         epochMessageCount = epochMessageCount,
         epochsCompleted = epochsCompleted,
+        lastBaseTimeTagUtcSec = lastBaseTimeTagUtcSec,
+        baseStationId = baseStationId,
     )
 
     fun reset() {
@@ -89,6 +91,8 @@ class EpochLatencyEngine(private val epochGapNanos: Long = DEFAULT_EPOCH_GAP_NAN
         lastMessageAtNanos = null
         lastEpochSpanMs = null
         epochsCompleted = 0
+        lastBaseTimeTagUtcSec = null
+        baseStationId = null
         epochStartNanos = 0
         epochLastNanos = 0
         epochMessageCount = 0

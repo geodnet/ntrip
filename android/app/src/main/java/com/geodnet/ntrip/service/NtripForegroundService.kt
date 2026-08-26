@@ -184,8 +184,26 @@ class NtripForegroundService : Service() {
                 if (fix == null) return@collect
                 trajectoryBuffer.add(fix)
                 staticSegmentDetector.accept(fix)?.let { segment ->
-                    _staticSegments.update { it + segment }
+                    _staticSegments.update { list ->
+                        val idx = list.indexOfFirst { it.startTimeMs == segment.startTimeMs }
+                        if (idx >= 0) {
+                            list.toMutableList().apply { set(idx, segment) }
+                        } else {
+                            list + segment
+                        }
+                    }
                     segmentLogger.append(segment)
+                }
+                // Live real-time static detection: update ongoing static segment if currently stationary >= minDuration
+                staticSegmentDetector.currentSegment()?.let { activeSeg ->
+                    _staticSegments.update { list ->
+                        val idx = list.indexOfFirst { it.startTimeMs == activeSeg.startTimeMs }
+                        if (idx >= 0) {
+                            list.toMutableList().apply { set(idx, activeSeg) }
+                        } else {
+                            list + activeSeg
+                        }
+                    }
                 }
             }
         }
@@ -218,6 +236,10 @@ class NtripForegroundService : Service() {
 
     override fun onBind(intent: Intent?): IBinder = binder
 
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        return START_NOT_STICKY
+    }
+
     /** Set by [stopConnection], checked before auto-reconnecting -- an unexpected drop schedules
      * a retry, but the user explicitly disconnecting must not. */
     private var userInitiatedDisconnect = false
@@ -225,7 +247,7 @@ class NtripForegroundService : Service() {
     private var reconnectAttempt = 0
 
     fun start(config: NtripConfig) {
-        if (runJob?.isActive == true) return
+        if (runJob?.isActive == true && currentConfig == config) return
         userInitiatedDisconnect = false
         reconnectJob?.cancel()
         reconnectAttempt = 0
@@ -233,6 +255,10 @@ class NtripForegroundService : Service() {
     }
 
     private fun startInternal(config: NtripConfig) {
+        runJob?.cancel()
+        observeJob?.cancel()
+        client?.stop()
+
         val newClient = NtripClient(config, livePosition = ::currentGgaOverride)
         client = newClient
         currentConfig = config
@@ -248,12 +274,8 @@ class NtripForegroundService : Service() {
                     _serviceState.value = state
                     updateNotification(state)
                     if (state.status == NtripStatus.CONNECTED) {
+                        reconnectJob?.cancel()
                         reconnectAttempt = 0
-                    } else if (
-                        (state.status == NtripStatus.ERROR || state.status == NtripStatus.DISCONNECTED) &&
-                        !userInitiatedDisconnect
-                    ) {
-                        scheduleReconnect(config)
                     }
                 }
             }
@@ -265,7 +287,15 @@ class NtripForegroundService : Service() {
             launch { newClient.baseStation.collect { _baseStation.value = it } }
             launch { newClient.rtcmFrames.collect { _rtcmFrames.emit(it) } }
         }
-        runJob = serviceScope.launch { newClient.run() }
+        runJob = serviceScope.launch {
+            try {
+                newClient.run()
+            } finally {
+                if (!userInitiatedDisconnect && _serviceState.value.status != NtripStatus.CONNECTED) {
+                    scheduleReconnect(config)
+                }
+            }
+        }
     }
 
     /** Exponential backoff (2s/4s/8s/16s/30s, capped) rather than hammering the caster after a
@@ -274,7 +304,7 @@ class NtripForegroundService : Service() {
      * only way out is calling [stopConnection] (or starting a different config, which cancels this
      * job too via [start]). */
     private fun scheduleReconnect(config: NtripConfig) {
-        if (reconnectJob?.isActive == true) return
+        if (reconnectJob?.isActive == true || userInitiatedDisconnect) return
         reconnectAttempt++
         val delayMs = (2_000L * (1L shl (reconnectAttempt - 1).coerceAtMost(4))).coerceAtMost(30_000L)
         reconnectJob = serviceScope.launch {
@@ -293,7 +323,6 @@ class NtripForegroundService : Service() {
         _baseStation.value = null
         _serviceState.value = NtripState(status = NtripStatus.DISCONNECTED)
         stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
     }
 
     override fun onDestroy() {
