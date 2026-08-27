@@ -282,10 +282,10 @@
   };
 
   var nearbyStationLayer = L.layerGroup().addTo(map);
-  function createNearbyBaseIcon(isActive) {
-    var color = isActive ? '#10b981' : '#8b5cf6';
-    var size = isActive ? 26 : 22;
-    var anchor = isActive ? [13, 20] : [11, 17];
+  function createNearbyBaseIcon(isConnected) {
+    var color = isConnected ? '#10b981' : '#8b5cf6';
+    var size = isConnected ? 26 : 22;
+    var anchor = isConnected ? [13, 20] : [11, 17];
     return L.divIcon({
       className: '',
       html: '<svg width="' + size + '" height="' + size + '" viewBox="0 0 24 24">' +
@@ -306,10 +306,11 @@
         var st = stations[i];
         var displayName = (st.shortName || st.name.slice(-5)).toUpperCase();
         var azimuthStr = st.azimuthDeg !== undefined ? (st.azimuthDeg.toFixed(1) + '° ' + (st.cardinalDirection || '')) : '';
-        var isActive = !!st.isActive;
+        var isConnected = !!st.isConnected;
+        var netStatus = st.status || 'ACTIVE';
         var isOpt = st.distanceKm <= 25.0;
-        var badgeColor = isActive ? '#10b981' : (isOpt ? '#3b82f6' : '#64748b');
-        var badgeText = isActive ? 'ACTIVE BASE ✓' : (isOpt ? 'Optimal RTK' : 'Extended RTK');
+        var badgeColor = isConnected ? '#10b981' : (netStatus === 'ACTIVE' ? '#06b6d4' : '#64748b');
+        var badgeText = isConnected ? 'CONNECTED BASE ✓' : netStatus;
 
         var popupContent =
           '<div style="font-family:-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif; min-width:160px; padding:2px;">' +
@@ -323,11 +324,11 @@
           '</div>';
 
         var marker = L.marker([st.lat, st.lng], {
-          icon: createNearbyBaseIcon(isActive),
-          zIndexOffset: isActive ? 1000 : 0
+          icon: createNearbyBaseIcon(isConnected),
+          zIndexOffset: isConnected ? 1000 : 0
         })
         .bindPopup(popupContent)
-        .bindTooltip('#' + displayName + ' (' + (isActive ? 'ACTIVE BASE' : st.distanceKm.toFixed(1) + 'km') + ')', { permanent: false, direction: 'top' });
+        .bindTooltip('#' + displayName + ' (' + (isConnected ? 'CONNECTED BASE' : (netStatus + ' • ' + st.distanceKm.toFixed(1) + 'km')) + ')', { permanent: false, direction: 'top' });
 
         if (nearbyVisible) marker.addTo(nearbyStationLayer);
       }

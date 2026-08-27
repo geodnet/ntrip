@@ -764,7 +764,7 @@ private fun nearbyStationsJson(
 ): String {
     val arr = JSONArray()
     for (st in stations) {
-        val isActive = if (baseStation != null && (baseStation.latDeg != 0.0 || baseStation.lonDeg != 0.0)) {
+        val isConnected = if (baseStation != null && (baseStation.latDeg != 0.0 || baseStation.lonDeg != 0.0)) {
             val distKm = com.geodnet.ntrip.data.GeodnetCoverageRepository.haversineDistanceKm(
                 st.lat, st.lng, baseStation.latDeg, baseStation.lonDeg
             )
@@ -788,7 +788,8 @@ private fun nearbyStationsJson(
             put("azimuthDeg", st.azimuthDeg)
             put("cardinalDirection", st.cardinalDirection)
             put("isOptimalRtk", st.isOptimalRtk)
-            put("isActive", isActive)
+            put("status", st.status)
+            put("isConnected", isConnected)
         }
         arr.put(obj)
     }
@@ -803,34 +804,30 @@ private fun nearbyStationsJson(
 private fun NearbyStationsDialog(
     nearbyStations: List<NearbyStation>,
     baseStation: com.geodnet.ntrip.rtcm.BaseStationFix?,
-    epochStats: com.geodnet.ntrip.rtcm.EpochLatencyStats,
+    epochStats: com.geodnet.ntrip.rtcm.EpochLatencyStats?,
     diffStationId: Int?,
     onDismiss: () -> Unit,
     onCenterOnStation: (Double, Double) -> Unit
 ) {
     fun isStationMatched(st: NearbyStation): Boolean {
-        // 1. Strict Physical Coordinate Match from RTCM 1005/1006 (within 500 meters)
         if (baseStation != null && (baseStation.latDeg != 0.0 || baseStation.lonDeg != 0.0)) {
             val distKm = com.geodnet.ntrip.data.GeodnetCoverageRepository.haversineDistanceKm(
                 st.lat, st.lng, baseStation.latDeg, baseStation.lonDeg
             )
-            return distKm < 0.5
+            if (distKm < 0.5) return true
         }
 
-        // 2. Exact Numeric Station ID Match (only when coordinates are not yet available)
         val validIds = listOfNotNull(
             baseStation?.staId?.takeIf { it > 0 },
-            epochStats.baseStationId?.takeIf { it > 0 },
+            epochStats?.baseStationId?.takeIf { it > 0 },
             diffStationId?.takeIf { it > 0 }
         )
 
-        if (validIds.isEmpty()) return false
-
-        val stNumericId = st.shortName.toIntOrNull()
-            ?: st.name.filter { it.isDigit() }.toIntOrNull()
-
-        if (stNumericId != null && stNumericId > 0) {
-            return validIds.any { it == stNumericId }
+        if (validIds.isNotEmpty()) {
+            val stNumericId = st.shortName.toIntOrNull() ?: st.name.filter { it.isDigit() }.toIntOrNull()
+            if (stNumericId != null && stNumericId > 0 && validIds.contains(stNumericId)) {
+                return true
+            }
         }
 
         return false
@@ -876,8 +873,8 @@ private fun NearbyStationsDialog(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            if (filterActiveOnly && hasActiveStation) "Showing active connected base station"
-                            else "${nearbyStations.size} active stations within 100 km",
+                            if (filterActiveOnly && hasActiveStation) "Showing connected base station"
+                            else "${nearbyStations.size} active stations within 100 km (ready for RTK)",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -896,13 +893,13 @@ private fun NearbyStationsDialog(
                         FilterChip(
                             selected = filterActiveOnly,
                             onClick = { filterActiveOnly = true },
-                            label = { Text("Active Station Only", fontWeight = FontWeight.SemiBold, fontSize = 12.sp) },
+                            label = { Text("Connected Base Only", fontWeight = FontWeight.SemiBold, fontSize = 12.sp) },
                             shape = RoundedCornerShape(8.dp)
                         )
                         FilterChip(
                             selected = !filterActiveOnly,
                             onClick = { filterActiveOnly = false },
-                            label = { Text("All Stations (${nearbyStations.size})", fontWeight = FontWeight.SemiBold, fontSize = 12.sp) },
+                            label = { Text("All Base Stations (${nearbyStations.size})", fontWeight = FontWeight.SemiBold, fontSize = 12.sp) },
                             shape = RoundedCornerShape(8.dp)
                         )
                     }
@@ -954,30 +951,52 @@ private fun NearbyStationsDialog(
                                         horizontalArrangement = Arrangement.SpaceBetween,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Text(
-                                            "Base #${st.shortName}",
-                                            style = MaterialTheme.typography.titleMedium,
-                                            fontWeight = FontWeight.Bold,
-                                            fontFamily = FontFamily.Monospace,
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
+                                        Column {
+                                            Text(
+                                                "Base #${st.shortName}",
+                                                style = MaterialTheme.typography.titleMedium,
+                                                fontWeight = FontWeight.Bold,
+                                                fontFamily = FontFamily.Monospace,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                        }
 
-                                        if (isMatched) {
-                                            Surface(
-                                                shape = RoundedCornerShape(6.dp),
-                                                color = SurveyColors.Connected.copy(alpha = 0.2f),
-                                                border = androidx.compose.foundation.BorderStroke(1.dp, SurveyColors.Connected)
-                                            ) {
-                                                Text(
-                                                    text = "ACTIVE BASE ✓",
-                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = SurveyColors.Connected,
-                                                    fontSize = 10.sp
-                                                )
+                                        Row(
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            if (isMatched) {
+                                                Surface(
+                                                    shape = RoundedCornerShape(6.dp),
+                                                    color = SurveyColors.Connected.copy(alpha = 0.2f),
+                                                    border = androidx.compose.foundation.BorderStroke(1.dp, SurveyColors.Connected)
+                                                ) {
+                                                    Text(
+                                                        text = "CONNECTED BASE ✓",
+                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = SurveyColors.Connected,
+                                                        fontSize = 10.sp
+                                                    )
+                                                }
+                                            } else {
+                                                Surface(
+                                                    shape = RoundedCornerShape(6.dp),
+                                                    color = if (st.status.equals("ACTIVE", ignoreCase = true)) SurveyColors.RtkFixed.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant,
+                                                    border = androidx.compose.foundation.BorderStroke(1.dp, if (st.status.equals("ACTIVE", ignoreCase = true)) SurveyColors.RtkFixed else MaterialTheme.colorScheme.outlineVariant)
+                                                ) {
+                                                    Text(
+                                                        text = st.status,
+                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = if (st.status.equals("ACTIVE", ignoreCase = true)) SurveyColors.RtkFixed else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        fontSize = 10.sp
+                                                    )
+                                                }
                                             }
-                                        } else {
+
                                             Surface(
                                                 shape = RoundedCornerShape(6.dp),
                                                 color = qualityColor.copy(alpha = 0.15f),

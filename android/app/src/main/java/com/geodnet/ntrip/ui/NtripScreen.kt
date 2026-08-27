@@ -1931,7 +1931,7 @@ private fun GeodnetCoverageCard(
                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
                                     Text(
-                                        if (isMatched) "Active Base: #${targetStation.shortName}" else "Nearest: Base #${targetStation.shortName}",
+                                        if (isMatched) "Connected Base: #${targetStation.shortName}" else "Nearest Base: #${targetStation.shortName}",
                                         style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.Bold,
                                         fontFamily = FontFamily.Monospace
@@ -1949,7 +1949,7 @@ private fun GeodnetCoverageCard(
                                 )
                             }
 
-                            // Quality or Active RTCM Badge
+                            // Connected RTCM or Network Status + Quality Badge
                             if (isMatched) {
                                 Surface(
                                     shape = RoundedCornerShape(6.dp),
@@ -1957,7 +1957,7 @@ private fun GeodnetCoverageCard(
                                     border = androidx.compose.foundation.BorderStroke(1.dp, SurveyColors.Connected)
                                 ) {
                                     Text(
-                                        text = "ACTIVE BASE ✓",
+                                        text = "CONNECTED BASE ✓",
                                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.Bold,
@@ -1966,19 +1966,38 @@ private fun GeodnetCoverageCard(
                                     )
                                 }
                             } else {
-                                Surface(
-                                    shape = RoundedCornerShape(6.dp),
-                                    color = qualityColor.copy(alpha = 0.2f),
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, qualityColor)
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text(
-                                        text = qualityLabel,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = qualityColor,
-                                        fontSize = 10.sp
-                                    )
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = if (targetStation.status.equals("ACTIVE", ignoreCase = true)) SurveyColors.RtkFixed.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant,
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, if (targetStation.status.equals("ACTIVE", ignoreCase = true)) SurveyColors.RtkFixed else MaterialTheme.colorScheme.outlineVariant)
+                                    ) {
+                                        Text(
+                                            text = targetStation.status,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (targetStation.status.equals("ACTIVE", ignoreCase = true)) SurveyColors.RtkFixed else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            fontSize = 10.sp
+                                        )
+                                    }
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = qualityColor.copy(alpha = 0.2f),
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, qualityColor)
+                                    ) {
+                                        Text(
+                                            text = qualityLabel,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = qualityColor,
+                                            fontSize = 10.sp
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -2009,7 +2028,7 @@ private fun GeodnetCoverageCard(
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Text(
-                            "OTHER NEARBY ACTIVE BASE STATIONS (${otherStations.size})",
+                            "OTHER NEARBY BASE STATIONS (${otherStations.size})",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2051,19 +2070,39 @@ private fun GeodnetCoverageCard(
                                         )
                                     }
 
-                                    if (isStMatched) {
-                                        Surface(
-                                            shape = RoundedCornerShape(4.dp),
-                                            color = SurveyColors.Connected.copy(alpha = 0.15f),
-                                            border = androidx.compose.foundation.BorderStroke(1.dp, SurveyColors.Connected)
-                                        ) {
-                                            Text(
-                                                "ACTIVE BASE ✓",
-                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                                style = MaterialTheme.typography.labelSmall,
-                                                fontWeight = FontWeight.Bold,
-                                                color = SurveyColors.Connected
-                                            )
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        if (isStMatched) {
+                                            Surface(
+                                                shape = RoundedCornerShape(4.dp),
+                                                color = SurveyColors.Connected.copy(alpha = 0.15f),
+                                                border = androidx.compose.foundation.BorderStroke(1.dp, SurveyColors.Connected)
+                                            ) {
+                                                Text(
+                                                    "CONNECTED BASE ✓",
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = SurveyColors.Connected
+                                                )
+                                            }
+                                        } else {
+                                            Surface(
+                                                shape = RoundedCornerShape(4.dp),
+                                                color = if (st.status.equals("ACTIVE", ignoreCase = true)) SurveyColors.RtkFixed.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant,
+                                                border = androidx.compose.foundation.BorderStroke(1.dp, if (st.status.equals("ACTIVE", ignoreCase = true)) SurveyColors.RtkFixed else MaterialTheme.colorScheme.outlineVariant)
+                                            ) {
+                                                Text(
+                                                    text = st.status,
+                                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = if (st.status.equals("ACTIVE", ignoreCase = true)) SurveyColors.RtkFixed else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    fontSize = 9.sp
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -2076,7 +2115,7 @@ private fun GeodnetCoverageCard(
                                 modifier = Modifier.align(Alignment.CenterHorizontally)
                             ) {
                                 Text(
-                                    if (expandedList) "Show Less" else "Show All (${otherStations.size}) Active Stations",
+                                    if (expandedList) "Show Less" else "Show All (${otherStations.size}) Stations",
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.SemiBold
                                 )
