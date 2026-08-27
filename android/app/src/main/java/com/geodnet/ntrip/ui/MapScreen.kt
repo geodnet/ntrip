@@ -837,8 +837,14 @@ private fun NearbyStationsDialog(
     }
 
     val hasActiveStation = nearbyStations.any { isStationMatched(it) }
-    var filterActiveOnly by remember(hasActiveStation) { mutableStateOf(hasActiveStation) }
-    val displayStations = if (filterActiveOnly && hasActiveStation) nearbyStations.filter { isStationMatched(it) } else nearbyStations
+    var filterActiveOnly by remember(hasActiveStation) { mutableStateOf(false) }
+    val sortedStations = remember(nearbyStations, baseStation, epochStats, diffStationId) {
+        nearbyStations.sortedWith(
+            compareByDescending<NearbyStation> { isStationMatched(it) }
+                .thenBy { it.distanceKm }
+        )
+    }
+    val displayStations = if (filterActiveOnly && hasActiveStation) sortedStations.filter { isStationMatched(it) } else sortedStations
 
     Dialog(
         onDismissRequest = onDismiss,

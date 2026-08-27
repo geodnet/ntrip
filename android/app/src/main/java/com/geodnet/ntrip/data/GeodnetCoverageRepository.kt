@@ -15,7 +15,8 @@ import kotlin.math.sqrt
 data class GeodnetStation(
     val name: String,
     val lat: Double,
-    val lng: Double
+    val lng: Double,
+    val status: String = "ACTIVE"
 )
 
 data class NearbyStation(
@@ -25,7 +26,8 @@ data class NearbyStation(
     val distanceKm: Double,
     val azimuthDeg: Double,
     val cardinalDirection: String,
-    val isOptimalRtk: Boolean
+    val isOptimalRtk: Boolean,
+    val status: String = "ACTIVE"
 ) {
     val shortName: String
         get() = name.takeLast(5)
@@ -104,7 +106,8 @@ class GeodnetCoverageRepository(private val context: Context) {
         userLat: Double,
         userLon: Double,
         maxRadiusKm: Double = 100.0,
-        limit: Int = 20
+        limit: Int = 30,
+        activeOnly: Boolean = true
     ): List<NearbyStation> {
         if (cachedStations.isEmpty()) return emptyList()
 
@@ -121,6 +124,10 @@ class GeodnetCoverageRepository(private val context: Context) {
         val candidates = ArrayList<NearbyStation>(32)
         for (i in 0 until cachedStations.size) {
             val station = cachedStations[i]
+            // By default, only include active/online stations (exclude offline)
+            if (activeOnly && !station.status.equals("ACTIVE", ignoreCase = true) && !station.status.equals("ONLINE", ignoreCase = true)) {
+                continue
+            }
             if (station.lat in minLat..maxLat && station.lng in minLon..maxLon) {
                 val dist = haversineDistanceKm(userLat, userLon, station.lat, station.lng)
                 if (dist <= maxRadiusKm) {
@@ -134,7 +141,8 @@ class GeodnetCoverageRepository(private val context: Context) {
                             distanceKm = dist,
                             azimuthDeg = azimuth,
                             cardinalDirection = cardinal,
-                            isOptimalRtk = dist <= 25.0
+                            isOptimalRtk = dist <= 25.0,
+                            status = station.status
                         )
                     )
                 }
@@ -165,10 +173,28 @@ class GeodnetCoverageRepository(private val context: Context) {
                     if (closeQuote == -1) break
                     val name = jsonStr.substring(openQuote + 1, closeQuote)
 
+                    // Optional "status"
+                    var status = "ACTIVE"
+                    val statusIdx = jsonStr.indexOf("\"status\"", closeQuote)
+                    var statusEnd = closeQuote
+                    if (statusIdx != -1 && statusIdx - closeQuote < 60) {
+                        val statusColon = jsonStr.indexOf(':', statusIdx + 8)
+                        if (statusColon != -1) {
+                            val stOpen = jsonStr.indexOf('"', statusColon + 1)
+                            if (stOpen != -1) {
+                                val stClose = jsonStr.indexOf('"', stOpen + 1)
+                                if (stClose != -1) {
+                                    status = jsonStr.substring(stOpen + 1, stClose).trim()
+                                    statusEnd = stClose
+                                }
+                            }
+                        }
+                    }
+
                     // Find "lat" within next 300 chars
-                    val latIdx = jsonStr.indexOf("\"lat\"", closeQuote)
-                    if (latIdx == -1 || latIdx - closeQuote > 300) {
-                        pos = closeQuote + 1
+                    val latIdx = jsonStr.indexOf("\"lat\"", statusEnd)
+                    if (latIdx == -1 || latIdx - statusEnd > 300) {
+                        pos = statusEnd + 1
                         continue
                     }
                     val latColon = jsonStr.indexOf(':', latIdx + 5)
@@ -198,7 +224,7 @@ class GeodnetCoverageRepository(private val context: Context) {
                     val lng = jsonStr.substring(lngStart, lngEnd).toDoubleOrNull()
 
                     if (lat != null && lng != null) {
-                        list.add(GeodnetStation(name = name, lat = lat, lng = lng))
+                        list.add(GeodnetStation(name = name, lat = lat, lng = lng, status = status))
                         pos = lngEnd
                     } else {
                         pos = closeQuote + 1

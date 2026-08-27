@@ -1998,81 +1998,88 @@ private fun GeodnetCoverageCard(
                     }
                 }
 
-                // Collapsible surrounding network stations (collapsed by default so only ACTIVE station is shown)
+                // Other close active stations list (up to 30 within 100 km)
                 val otherStations = nearbyStations.filter { it != targetStation }
                 if (otherStations.isNotEmpty()) {
-                    var showAllNearby by remember { mutableStateOf(false) }
+                    var expandedList by remember { mutableStateOf(false) }
+                    val displayList = if (expandedList) otherStations else otherStations.take(4)
 
-                    OutlinedButton(
-                        onClick = { showAllNearby = !showAllNearby },
+                    Column(
                         modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(10.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Text(
-                            if (showAllNearby) "Hide Other Stations" else "Show Other Nearby Stations (${otherStations.size})",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold
+                            "OTHER NEARBY ACTIVE BASE STATIONS (${otherStations.size})",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            letterSpacing = 0.5.sp
                         )
-                    }
 
-                    if (showAllNearby) {
-                        Column(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            otherStations.forEach { st ->
-                                val isStMatched = isStationMatched(st)
-                                Surface(
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = if (isStMatched) SurveyColors.Connected.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
-                                    border = if (isStMatched) androidx.compose.foundation.BorderStroke(1.5.dp, SurveyColors.Connected) else null,
-                                    modifier = Modifier.fillMaxWidth()
+                        displayList.forEach { st ->
+                            val isStMatched = isStationMatched(st)
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (isStMatched) SurveyColors.Connected.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                                border = if (isStMatched) androidx.compose.foundation.BorderStroke(1.5.dp, SurveyColors.Connected) else null,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                                        .fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .padding(horizontal = 12.dp, vertical = 8.dp)
-                                            .fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Column {
-                                            Text(
-                                                "Base #${st.shortName}",
-                                                style = MaterialTheme.typography.bodyMedium,
-                                                fontWeight = FontWeight.Bold,
-                                                fontFamily = FontFamily.Monospace
-                                            )
-                                            Text(
-                                                "%.2f km • %.1f° %s • %.4f, %.4f".format(
-                                                    st.distanceKm,
-                                                    st.azimuthDeg,
-                                                    st.cardinalDirection,
-                                                    st.lat,
-                                                    st.lng
-                                                ),
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        }
+                                    Column {
+                                        Text(
+                                            "Base #${st.shortName}",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            fontFamily = FontFamily.Monospace
+                                        )
+                                        Text(
+                                            "%.2f km • %.1f° %s • %.4f, %.4f".format(
+                                                st.distanceKm,
+                                                st.azimuthDeg,
+                                                st.cardinalDirection,
+                                                st.lat,
+                                                st.lng
+                                            ),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
 
-                                        if (isStMatched) {
-                                            Surface(
-                                                shape = RoundedCornerShape(4.dp),
-                                                color = SurveyColors.Connected.copy(alpha = 0.15f),
-                                                border = androidx.compose.foundation.BorderStroke(1.dp, SurveyColors.Connected)
-                                            ) {
-                                                Text(
-                                                    "ACTIVE BASE ✓",
-                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = SurveyColors.Connected
-                                                )
-                                            }
+                                    if (isStMatched) {
+                                        Surface(
+                                            shape = RoundedCornerShape(4.dp),
+                                            color = SurveyColors.Connected.copy(alpha = 0.15f),
+                                            border = androidx.compose.foundation.BorderStroke(1.dp, SurveyColors.Connected)
+                                        ) {
+                                            Text(
+                                                "ACTIVE BASE ✓",
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = SurveyColors.Connected
+                                            )
                                         }
                                     }
                                 }
+                            }
+                        }
+
+                        if (otherStations.size > 4) {
+                            TextButton(
+                                onClick = { expandedList = !expandedList },
+                                modifier = Modifier.align(Alignment.CenterHorizontally)
+                            ) {
+                                Text(
+                                    if (expandedList) "Show Less" else "Show All (${otherStations.size}) Active Stations",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
                             }
                         }
                     }

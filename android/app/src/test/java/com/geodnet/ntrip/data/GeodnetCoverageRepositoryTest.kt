@@ -13,17 +13,21 @@ class GeodnetCoverageRepositoryTest {
             "code": 0,
             "msg": "success",
             "data": [
-                { "name": "****69D0C", "lat": 37.399256, "lng": -121.976698 },
-                { "name": "****70316", "lat": 29.947643, "lng": -95.179958 }
+                { "name": "****69D0C", "status": "ACTIVE", "lat": 37.399256, "lng": -121.976698 },
+                { "name": "****70316", "status": "ONLINE", "lat": 29.947643, "lng": -95.179958 },
+                { "name": "****0EC16", "status": "OFFLINE", "lat": 42.344, "lng": -83.386 }
             ]
         }
         """.trimIndent()
 
         val stations = GeodnetCoverageRepository.parseStationsJson(sampleJson)
-        assertEquals(2, stations.size)
+        assertEquals(3, stations.size)
         assertEquals("****69D0C", stations[0].name)
+        assertEquals("ACTIVE", stations[0].status)
         assertEquals(37.399256, stations[0].lat, 1e-6)
         assertEquals(-121.976698, stations[0].lng, 1e-6)
+        assertEquals("ONLINE", stations[1].status)
+        assertEquals("OFFLINE", stations[2].status)
     }
 
     @Test
