@@ -782,16 +782,14 @@ private fun nearbyStationsJson(
         epochStats?.baseStationId?.takeIf { it > 0 },
         diffStationId?.takeIf { it > 0 }
     )
+    val connectedStation = com.geodnet.ntrip.data.GeodnetCoverageRepository.findConnectedStation(
+        stations = stations,
+        baseLat = baseStation?.latDeg,
+        baseLon = baseStation?.lonDeg,
+        activeStaIds = validIds
+    )
     for (st in stations) {
-        val isConnected = com.geodnet.ntrip.data.GeodnetCoverageRepository.isStationMatch(
-            stationLat = st.lat,
-            stationLon = st.lng,
-            stationRtcmId = st.rtcmStationId,
-            stationName = st.name,
-            baseLat = baseStation?.latDeg,
-            baseLon = baseStation?.lonDeg,
-            activeStaIds = validIds
-        )
+        val isConnected = connectedStation != null && st == connectedStation
 
         val obj = JSONObject().apply {
             put("name", st.name)
@@ -824,32 +822,31 @@ private fun NearbyStationsDialog(
     onDismiss: () -> Unit,
     onCenterOnStation: (Double, Double) -> Unit
 ) {
-    fun isStationMatched(st: NearbyStation): Boolean {
-        val validIds = listOfNotNull(
+    val validIds = remember(baseStation?.staId, epochStats?.baseStationId, diffStationId) {
+        listOfNotNull(
             baseStation?.staId?.takeIf { it > 0 },
             epochStats?.baseStationId?.takeIf { it > 0 },
             diffStationId?.takeIf { it > 0 }
         )
-        return com.geodnet.ntrip.data.GeodnetCoverageRepository.isStationMatch(
-            stationLat = st.lat,
-            stationLon = st.lng,
-            stationRtcmId = st.rtcmStationId,
-            stationName = st.name,
+    }
+    val connectedStation = remember(nearbyStations, baseStation?.latDeg, baseStation?.lonDeg, validIds) {
+        com.geodnet.ntrip.data.GeodnetCoverageRepository.findConnectedStation(
+            stations = nearbyStations,
             baseLat = baseStation?.latDeg,
             baseLon = baseStation?.lonDeg,
             activeStaIds = validIds
         )
     }
 
-    val hasActiveStation = nearbyStations.any { isStationMatched(it) }
+    val hasActiveStation = connectedStation != null
     var filterActiveOnly by remember(hasActiveStation) { mutableStateOf(false) }
-    val sortedStations = remember(nearbyStations, baseStation, epochStats, diffStationId) {
+    val sortedStations = remember(nearbyStations, connectedStation) {
         nearbyStations.sortedWith(
-            compareByDescending<NearbyStation> { isStationMatched(it) }
+            compareByDescending<NearbyStation> { connectedStation != null && it == connectedStation }
                 .thenBy { it.distanceKm }
         )
     }
-    val displayStations = if (filterActiveOnly && hasActiveStation) sortedStations.filter { isStationMatched(it) } else sortedStations
+    val displayStations = if (filterActiveOnly && hasActiveStation) sortedStations.filter { it == connectedStation } else sortedStations
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -983,7 +980,7 @@ private fun NearbyStationsDialog(
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         items(displayStations) { st ->
-                            val isMatched = isStationMatched(st)
+                            val isMatched = connectedStation != null && st == connectedStation
                             val (qualityLabel, qualityColor) = when {
                                 st.distanceKm <= 25.0 -> "OPTIMAL RTK" to SurveyColors.RtkFixed
                                 st.distanceKm <= 50.0 -> "EXTENDED RTK" to SurveyColors.RtkFloat

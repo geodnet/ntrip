@@ -1853,17 +1853,18 @@ private fun GeodnetCoverageCard(
     diffStationId: Int?,
     onRefresh: () -> Unit,
 ) {
-    fun isStationMatched(st: NearbyStation): Boolean {
-        val validIds = listOfNotNull(
+    val validIds = remember(baseStation?.staId, epochStats.baseStationId, diffStationId) {
+        listOfNotNull(
             baseStation?.staId?.takeIf { it > 0 },
             epochStats.baseStationId?.takeIf { it > 0 },
             diffStationId?.takeIf { it > 0 }
         )
-        return com.geodnet.ntrip.data.GeodnetCoverageRepository.isStationMatch(
-            stationLat = st.lat,
-            stationLon = st.lng,
-            stationRtcmId = st.rtcmStationId,
-            stationName = st.name,
+    }
+
+    // Identify the EXACT SINGLE connected base station from the list
+    val connectedStation = remember(nearbyStations, baseStation?.latDeg, baseStation?.lonDeg, validIds) {
+        com.geodnet.ntrip.data.GeodnetCoverageRepository.findConnectedStation(
+            stations = nearbyStations,
             baseLat = baseStation?.latDeg,
             baseLon = baseStation?.lonDeg,
             activeStaIds = validIds
@@ -1930,9 +1931,8 @@ private fun GeodnetCoverageCard(
             }
 
             if (nearbyStations.isNotEmpty()) {
-                val activeStation = nearbyStations.find { isStationMatched(it) }
-                val targetStation = activeStation ?: nearbyStations.first()
-                val isMatched = isStationMatched(targetStation)
+                val isMatched = connectedStation != null
+                val targetStation = connectedStation ?: nearbyStations.first()
                 val (qualityLabel, qualityColor) = when {
                     targetStation.distanceKm <= 25.0 -> "OPTIMAL RTK (<25km)" to SurveyColors.RtkFixed
                     targetStation.distanceKm <= 50.0 -> "EXTENDED RTK (25-50km)" to SurveyColors.RtkFloat
@@ -2119,7 +2119,7 @@ private fun GeodnetCoverageCard(
                         )
 
                         displayList.forEach { st ->
-                            val isStMatched = isStationMatched(st)
+                            val isStMatched = connectedStation != null && st == connectedStation
                             Surface(
                                 shape = RoundedCornerShape(8.dp),
                                 color = if (isStMatched) SurveyColors.Connected.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),

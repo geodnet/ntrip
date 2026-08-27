@@ -153,6 +153,28 @@ class GeodnetCoverageRepositoryTest {
     }
 
     @Test
+    fun findConnectedStation_singleMatch_returnsOnlyOneConnectedStation() {
+        val st1 = NearbyStation("GEOD_1111", 37.399, -121.976, 0.05, 10.0, "N", true, "ACTIVE", 1111)
+        val st2 = NearbyStation("GEOD_2222", 37.450, -121.900, 5.20, 45.0, "NE", true, "ACTIVE", 2222)
+        val st3 = NearbyStation("GEOD_3333", 37.500, -121.800, 12.0, 60.0, "ENE", true, "ACTIVE", 3333)
+        val list = listOf(st1, st2, st3)
+
+        // Matching st1 (ID 1111 and coords near 37.399, -121.976)
+        val connected = GeodnetCoverageRepository.findConnectedStation(
+            stations = list,
+            baseLat = 37.3992,
+            baseLon = -121.9765,
+            activeStaIds = listOf(1111)
+        )
+        assertEquals(st1, connected)
+
+        // Only st1 matches; st2 and st3 are NOT connected
+        assertTrue(connected == st1)
+        assertTrue(connected != st2)
+        assertTrue(connected != st3)
+    }
+
+    @Test
     fun parseStationsJson_largeDataset_parsesRapidly() {
         val sb = StringBuilder(1024 * 1024)
         sb.append("[")
