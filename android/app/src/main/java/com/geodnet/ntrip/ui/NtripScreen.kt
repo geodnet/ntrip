@@ -727,7 +727,8 @@ private fun BleReceiverCard(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        val baseStationId = if (fix.diffStationId != 0) fix.diffStationId else epochStats.baseStationId
+                        val isRtk = fix.fixQuality == 4 || fix.fixQuality == 5
+                        val baseStationId = if (isRtk && fix.diffStationId != 0) fix.diffStationId else null
                         TelemetryTile(
                             title = "BASE ID",
                             value = baseStationId?.let { "#$it" } ?: "—",

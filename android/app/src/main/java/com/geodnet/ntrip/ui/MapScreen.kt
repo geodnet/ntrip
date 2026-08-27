@@ -483,11 +483,12 @@ fun MapScreen(viewModel: NtripViewModel) {
     }
 
     if (showNearbyDialog) {
+        val isRtkFix = bestFix?.let { it.fixQuality == 4 || it.fixQuality == 5 } ?: false
         NearbyStationsDialog(
             nearbyStations = nearbyStations,
-            baseStation = baseStation,
-            epochStats = epochStats,
-            diffStationId = bestFix?.diffStationId,
+            baseStation = if (isRtkFix) baseStation else null,
+            epochStats = if (isRtkFix) epochStats else null,
+            diffStationId = if (isRtkFix) bestFix?.diffStationId?.takeIf { it != 0 } else null,
             onDismiss = { showNearbyDialog = false },
             onCenterOnStation = { lat, lng ->
                 webViewRef?.evaluateJavascript("window.centerOnStation($lat, $lng)", null)
@@ -537,11 +538,13 @@ fun MapScreen(viewModel: NtripViewModel) {
         if (pageReady) webViewRef?.evaluateJavascript("setNearbyStationsVisible($showNearbyStations)", null)
     }
 
-    val currentStationId = mapRover?.diffStationId ?: baseStation?.staId ?: epochStats.baseStationId
-    LaunchedEffect(pageReady, nearbyStations, mapBase, currentStationId) {
+    val isRtkFix = mapRover?.let { it.fixQuality == 4 || it.fixQuality == 5 } ?: false
+    val currentStationId = if (isRtkFix) mapRover?.diffStationId?.takeIf { it != 0 } else null
+    val currentBase = if (isRtkFix) mapBase else null
+    LaunchedEffect(pageReady, nearbyStations, currentBase, currentStationId) {
         if (pageReady) {
             webViewRef?.evaluateJavascript(
-                "setNearbyStations(${nearbyStationsJson(nearbyStations, mapBase, null, currentStationId)})",
+                "setNearbyStations(${nearbyStationsJson(nearbyStations, currentBase, null, currentStationId)})",
                 null
             )
         }
@@ -557,9 +560,9 @@ fun MapScreen(viewModel: NtripViewModel) {
         }
     }
 
-    LaunchedEffect(pageReady, mapBase) {
+    LaunchedEffect(pageReady, mapBase, isRtkFix) {
         if (!pageReady) return@LaunchedEffect
-        val base = mapBase
+        val base = if (isRtkFix) mapBase else null
         if (base != null) {
             webViewRef?.evaluateJavascript(
                 "setBase(${base.latDeg}, ${base.lonDeg}, ${base.altM}, ${base.staId}, ${base.baselineKm})",
@@ -603,11 +606,15 @@ private fun MapSurveyHud(
 ) {
     val satellites = fix?.numSatellites
     val accuracyM = gst?.let { sqrt(it.latStdDevM * it.latStdDevM + it.lonStdDevM * it.lonStdDevM) }
-    val baseId = when {
-        fix != null && fix.diffStationId != 0 -> fix.diffStationId
-        baseStation != null -> baseStation.staId
-        epochStats.baseStationId != null -> epochStats.baseStationId
-        else -> null
+    val fixQuality = fix?.fixQuality ?: 0
+    val isRtk = fixQuality == 4 || fixQuality == 5
+
+    // In the map box, if the position status is not in RTK float (5) or RTK fix (4),
+    // then there is no base station ID. Base ID only comes from the GGA sentence (diffStationId).
+    val baseId = if (isRtk && fix != null && fix.diffStationId != 0) {
+        fix.diffStationId
+    } else {
+        null
     }
 
     // AGE of differential corrections (from NMEA GGA field 13)
@@ -620,12 +627,13 @@ private fun MapSurveyHud(
     ) ?: (epochStats.lastMessageAgeMs.takeIf { it > 0 }?.let { it / 1000.0 })
 
     // Baseline length in km between rover and connected/configured base
-    val baselineKm: Double? = baseStation?.baselineKm
-        ?: if (fix != null && (config.latitude != 0.0 || config.longitude != 0.0)) {
-            GeodnetCoverageRepository.haversineDistanceKm(fix.latitude, fix.longitude, config.latitude, config.longitude)
-        } else null
+    val baselineKm: Double? = if (isRtk) {
+        baseStation?.baselineKm
+            ?: if (fix != null && (config.latitude != 0.0 || config.longitude != 0.0)) {
+                GeodnetCoverageRepository.haversineDistanceKm(fix.latitude, fix.longitude, config.latitude, config.longitude)
+            } else null
+    } else null
 
-    val fixQuality = fix?.fixQuality ?: 0
     val (qualityLabel, qualityColor) = when (fixQuality) {
         4 -> "RTK FIX" to SurveyColors.RtkFixed
         5 -> "RTK FLOAT" to SurveyColors.RtkFloat
