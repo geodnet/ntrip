@@ -131,7 +131,7 @@ class NtripViewModel(app: Application) : AndroidViewModel(app) {
     private val _isCoverageLoading = MutableStateFlow(false)
     val isCoverageLoading: StateFlow<Boolean> = _isCoverageLoading.asStateFlow()
 
-    private val _showNearbyStations = MutableStateFlow(true)
+    private val _showNearbyStations = MutableStateFlow(false)
     val showNearbyStations: StateFlow<Boolean> = _showNearbyStations.asStateFlow()
 
     // NTRIP Caster Sourcetable

@@ -31,6 +31,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.Icon
@@ -835,6 +836,10 @@ private fun NearbyStationsDialog(
         return false
     }
 
+    val hasActiveStation = nearbyStations.any { isStationMatched(it) }
+    var filterActiveOnly by remember(hasActiveStation) { mutableStateOf(hasActiveStation) }
+    val displayStations = if (filterActiveOnly && hasActiveStation) nearbyStations.filter { isStationMatched(it) } else nearbyStations
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -865,7 +870,8 @@ private fun NearbyStationsDialog(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            "${nearbyStations.size} active stations within 100 km",
+                            if (filterActiveOnly && hasActiveStation) "Showing active connected base station"
+                            else "${nearbyStations.size} active stations within 100 km",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -876,7 +882,27 @@ private fun NearbyStationsDialog(
                     }
                 }
 
-                if (nearbyStations.isEmpty()) {
+                if (hasActiveStation) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        FilterChip(
+                            selected = filterActiveOnly,
+                            onClick = { filterActiveOnly = true },
+                            label = { Text("Active Station Only", fontWeight = FontWeight.SemiBold, fontSize = 12.sp) },
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                        FilterChip(
+                            selected = !filterActiveOnly,
+                            onClick = { filterActiveOnly = false },
+                            label = { Text("All Stations (${nearbyStations.size})", fontWeight = FontWeight.SemiBold, fontSize = 12.sp) },
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                    }
+                }
+
+                if (displayStations.isEmpty()) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -895,7 +921,7 @@ private fun NearbyStationsDialog(
                         modifier = Modifier.weight(1f),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        items(nearbyStations) { st ->
+                        items(displayStations) { st ->
                             val isMatched = isStationMatched(st)
                             val (qualityLabel, qualityColor) = when {
                                 st.distanceKm <= 25.0 -> "OPTIMAL RTK" to SurveyColors.RtkFixed

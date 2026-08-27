@@ -1563,7 +1563,7 @@ private fun NtripSettingsDialog(
                             Button(
                                 onClick = {
                                     try {
-                                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://console.geodnet.com"))
+                                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://geodnet.com/free"))
                                         context.startActivity(intent)
                                     } catch (_: Exception) {}
                                 },
@@ -1574,7 +1574,7 @@ private fun NtripSettingsDialog(
                                 ),
                                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                             ) {
-                                Text("🌐 Apply for Account (console.geodnet.com)", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                Text("🌐 Apply for Free Account (geodnet.com/free)", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                             }
                         }
                     }
@@ -1897,21 +1897,22 @@ private fun GeodnetCoverageCard(
             }
 
             if (nearbyStations.isNotEmpty()) {
-                val nearest = nearbyStations.first()
-                val isNearestMatched = isStationMatched(nearest)
+                val activeStation = nearbyStations.find { isStationMatched(it) }
+                val targetStation = activeStation ?: nearbyStations.first()
+                val isMatched = isStationMatched(targetStation)
                 val (qualityLabel, qualityColor) = when {
-                    nearest.distanceKm <= 25.0 -> "OPTIMAL RTK (<25km)" to SurveyColors.RtkFixed
-                    nearest.distanceKm <= 50.0 -> "EXTENDED RTK (25-50km)" to SurveyColors.RtkFloat
+                    targetStation.distanceKm <= 25.0 -> "OPTIMAL RTK (<25km)" to SurveyColors.RtkFixed
+                    targetStation.distanceKm <= 50.0 -> "EXTENDED RTK (25-50km)" to SurveyColors.RtkFloat
                     else -> "DGPS BASELINE (>50km)" to SurveyColors.Dgps
                 }
 
-                // Nearest Station Hero Box
+                // Active / Nearest Base Station Hero Box
                 Surface(
                     shape = RoundedCornerShape(12.dp),
-                    color = if (isNearestMatched) SurveyColors.Connected.copy(alpha = 0.12f) else qualityColor.copy(alpha = 0.08f),
+                    color = if (isMatched) SurveyColors.Connected.copy(alpha = 0.12f) else qualityColor.copy(alpha = 0.08f),
                     border = androidx.compose.foundation.BorderStroke(
-                        if (isNearestMatched) 2.dp else 1.5.dp,
-                        if (isNearestMatched) SurveyColors.Connected else qualityColor.copy(alpha = 0.6f)
+                        if (isMatched) 2.dp else 1.5.dp,
+                        if (isMatched) SurveyColors.Connected else qualityColor.copy(alpha = 0.6f)
                     ),
                     modifier = Modifier.fillMaxWidth()
                 ) {
@@ -1930,7 +1931,7 @@ private fun GeodnetCoverageCard(
                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
                                     Text(
-                                        "Nearest: Base #${nearest.shortName}",
+                                        if (isMatched) "Active Base: #${targetStation.shortName}" else "Nearest: Base #${targetStation.shortName}",
                                         style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.Bold,
                                         fontFamily = FontFamily.Monospace
@@ -1938,9 +1939,9 @@ private fun GeodnetCoverageCard(
                                 }
                                 Text(
                                     "Baseline: %.2f km • Azimuth: %.1f° %s".format(
-                                        nearest.distanceKm,
-                                        nearest.azimuthDeg,
-                                        nearest.cardinalDirection
+                                        targetStation.distanceKm,
+                                        targetStation.azimuthDeg,
+                                        targetStation.cardinalDirection
                                     ),
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.SemiBold,
@@ -1949,7 +1950,7 @@ private fun GeodnetCoverageCard(
                             }
 
                             // Quality or Active RTCM Badge
-                            if (isNearestMatched) {
+                            if (isMatched) {
                                 Surface(
                                     shape = RoundedCornerShape(6.dp),
                                     color = SurveyColors.Connected.copy(alpha = 0.2f),
@@ -1988,7 +1989,7 @@ private fun GeodnetCoverageCard(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                "Coords: %.5f, %.5f".format(nearest.lat, nearest.lng),
+                                "Coords: %.5f, %.5f".format(targetStation.lat, targetStation.lng),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontFamily = FontFamily.Monospace
@@ -1997,71 +1998,78 @@ private fun GeodnetCoverageCard(
                     }
                 }
 
-                // Other close stations list (up to 20 within 100 km)
-                if (nearbyStations.size > 1) {
-                    var expandedList by remember { mutableStateOf(false) }
-                    val displayList = if (expandedList) nearbyStations.drop(1) else nearbyStations.drop(1).take(4)
+                // Collapsible surrounding network stations (collapsed by default so only ACTIVE station is shown)
+                val otherStations = nearbyStations.filter { it != targetStation }
+                if (otherStations.isNotEmpty()) {
+                    var showAllNearby by remember { mutableStateOf(false) }
 
-                    Column(
+                    OutlinedButton(
+                        onClick = { showAllNearby = !showAllNearby },
                         modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                     ) {
                         Text(
-                            "OTHER NEARBY BASE STATIONS (${nearbyStations.size - 1})",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            letterSpacing = 0.5.sp
+                            if (showAllNearby) "Hide Other Stations" else "Show Other Nearby Stations (${otherStations.size})",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
                         )
+                    }
 
-                        displayList.forEach { st ->
-                            val isStMatched = isStationMatched(st)
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = if (isStMatched) SurveyColors.Connected.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
-                                border = if (isStMatched) androidx.compose.foundation.BorderStroke(1.5.dp, SurveyColors.Connected) else null,
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .padding(horizontal = 12.dp, vertical = 8.dp)
-                                        .fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
+                    if (showAllNearby) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            otherStations.forEach { st ->
+                                val isStMatched = isStationMatched(st)
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (isStMatched) SurveyColors.Connected.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                                    border = if (isStMatched) androidx.compose.foundation.BorderStroke(1.5.dp, SurveyColors.Connected) else null,
+                                    modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    Column {
-                                        Text(
-                                            "Base #${st.shortName}",
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            fontWeight = FontWeight.Bold,
-                                            fontFamily = FontFamily.Monospace
-                                        )
-                                        Text(
-                                            "%.2f km • %.1f° %s • %.4f, %.4f".format(
-                                                st.distanceKm,
-                                                st.azimuthDeg,
-                                                st.cardinalDirection,
-                                                st.lat,
-                                                st.lng
-                                            ),
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-
-                                    if (isStMatched) {
-                                        Surface(
-                                            shape = RoundedCornerShape(4.dp),
-                                            color = SurveyColors.Connected.copy(alpha = 0.15f),
-                                            border = androidx.compose.foundation.BorderStroke(1.dp, SurveyColors.Connected)
-                                        ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                                            .fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column {
                                             Text(
-                                                "ACTIVE BASE ✓",
-                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                                style = MaterialTheme.typography.labelSmall,
+                                                "Base #${st.shortName}",
+                                                style = MaterialTheme.typography.bodyMedium,
                                                 fontWeight = FontWeight.Bold,
-                                                color = SurveyColors.Connected
+                                                fontFamily = FontFamily.Monospace
                                             )
+                                            Text(
+                                                "%.2f km • %.1f° %s • %.4f, %.4f".format(
+                                                    st.distanceKm,
+                                                    st.azimuthDeg,
+                                                    st.cardinalDirection,
+                                                    st.lat,
+                                                    st.lng
+                                                ),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+
+                                        if (isStMatched) {
+                                            Surface(
+                                                shape = RoundedCornerShape(4.dp),
+                                                color = SurveyColors.Connected.copy(alpha = 0.15f),
+                                                border = androidx.compose.foundation.BorderStroke(1.dp, SurveyColors.Connected)
+                                            ) {
+                                                Text(
+                                                    "ACTIVE BASE ✓",
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = SurveyColors.Connected
+                                                )
+                                            }
                                         }
                                     }
                                 }
