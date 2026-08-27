@@ -49,8 +49,8 @@ saveable connection profiles instead (add/load/update/delete) — see `CLAUDE.md
 - **GNSS Ephemeris Filtering**: Default-enabled toggle to filter out heavy satellite ephemeris frames (`1019`, `1020`, `1041-1046`) before forwarding over BLE.
 
 ### 🛰️ 3. GEODNET Base Station Discovery & Active Station Matching
-- **Proximity Discovery**: Discovers up to 20 active GEODNET base stations within a 100 km radius.
-- **Active Base Station Matching**: Cross-matches RTCM 1005 ARP station IDs/coordinates and GGA differential station IDs to highlight the connected base station in green (`#10b981`), while rendering surrounding network base stations normally.
+- **Proximity Discovery & Active Filtering**: Discovers up to 30 nearby GEODNET base stations within a 100 km radius, parsing network statuses (`ACTIVE`, `ONLINE`, `OFFLINE`) from `coverage_stations` API and filtering out offline stations by default.
+- **Connected Base vs Active Network Status**: Clearly distinguishes the actively streaming base station labeled as **`CONNECTED BASE ✓`** (green `#10b981`) from surrounding network base stations labeled with their operational suitability status **`ACTIVE`**.
 - **Real-Time Baseline & Azimuth**: Displays baseline distance, azimuth degrees, and cardinal bearings to each base station.
 
 ### ⏱️ 4. RTCM 3.x Inspector & Latency Engine
@@ -58,7 +58,9 @@ saveable connection profiles instead (add/load/update/delete) — see `CLAUDE.md
   - **Base Station ARP**: `1005` / `1006`
   - **MSM Observation Frames**: `107X` (GPS), `108X` (GLONASS), `109X` (Galileo), `110X` (QZSS), `111X` (SBAS), `112X` (BeiDou), `113X` (NavIC) with compact log formatting
   - **Auxiliary Frames**: `1033` (Antenna/Receiver Descriptor), `1230` (GLONASS Code-Phase Biases), `1019-1046` (Satellite Ephemerides)
-- **Epoch Latency Engine**: Calculates epoch duration, first message latency, last message latency, and differential age.
+- **MSM Sync Flag & Time Tag Epoch Tracking**: Tracks GNSS observation epochs using the RTCM MSM header `Multiple Message Bit` (`sync == 0` marks the final frame of an observation epoch) and decoded observation time tags, ensuring the `EPOCHS` count matches the GPS MSM4 (`1074`) count 1:1 regardless of mobile TCP packet jitter.
+- **Live Decode Log Freeze / Pause**: Allows freezing the live decode log in place with `⏸ Pause` to inspect frames and scroll history without incoming messages shifting the list, resuming live streaming with `▶ Resume`.
+- **Sub-Millisecond Epoch Latency Engine**: Calculates exact epoch duration ($\Delta t$), first message latency, last message age, and base observation time tags.
 
 ### 🗺️ 5. Offline Leaflet Map, Survey HUD & Coordinate Datum Transformation
 - **Offline Leaflet Map with Canvas Acceleration**: Embedded satellite and street basemaps with hardware-accelerated HTML5 `<canvas>` rendering (`preferCanvas: true`) for butter-smooth trajectory visualization even at high sample rates (>5Hz, 10Hz, 20Hz).

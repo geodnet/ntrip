@@ -40,13 +40,7 @@ skipped:**
    environment. Shipping a decoder that *looks* legitimate but might silently be wrong felt worse
    than clearly not shipping one. If you have RTKLIB source or real 1230 capture data to verify
    against, this is a reasonable next feature to pick up.
-2. **The Latency Engine's "20-bit MSM TOW modulo matching"** — real MSM TOW fields are ~30 bits
-   (enough to cover a GPS week in milliseconds), not 20, so there's no literal 20-bit field to
-   match on; `rtcm/EpochLatencyEngine` instead correlates messages into "epochs" by arrival-time
-   clustering (a gap-based heuristic) rather than by decoding and cross-referencing each
-   constellation's own epoch field across GPS/GLONASS/Galileo/BeiDou's different time scales. See
-   that class's doc comment for the full reasoning — it still produces the literal
-   Δt_epoch = t_last - t_first the readme asks for, just correlated differently.
+2. **The Latency Engine Epoch Tracking** — `rtcm/EpochLatencyEngine` tracks GNSS observation epochs using the RTCM MSM header `Multiple Message Bit` (sync flag: `0` marks the final message of an epoch) alongside decoded observation time tags (`baseTimeTagUtcSec`) and constellation repetition. This ensures the `EPOCHS` count precisely matches the GPS MSM4 (`1074`) message count 1:1 regardless of network jitter over mobile TCP streams, while calculating the literal $\Delta t_{\text{epoch}} = t_{\text{last}} - t_{\text{first}}$ epoch span and arrival latencies.
 
 **The BLE code has not been verified against real hardware in this environment** — it compiles
 cleanly against the real Android BLE APIs and the NMEA parsing has real unit tests, but the GATT
@@ -185,9 +179,9 @@ have `sdk.dir` pointing at your Android SDK.
     relay forwarded everything blindly) -- a strict improvement, not a regression, but a behavior
     change from before this existed.
   - `RtcmFrameParser` also exposes `epochStats: StateFlow<EpochLatencyStats>` via
-    `EpochLatencyEngine` (see that class's own file for the full "Latency Engine" writeup and why
-    it doesn't implement the readme's literal "20-bit MSM TOW modulo matching" -- see Status
-    above). Fed on every legacy-observation (1001-1012) or MSM message; reset alongside `reset()`.
+    `EpochLatencyEngine`. Fed on observation messages (1001-1004, 1009-1012, MSM 1071-1137);
+    tracks epochs via the MSM `Multiple Message Bit` (sync flag) and observation time tags; reset
+    alongside `reset()`.
 - `service/NtripForegroundService.kt` — hosts the `NtripClient` so the connection survives the app
   being backgrounded (a hard Android platform requirement for background networking, not
   optional). Declared with `foregroundServiceType="dataSync"` in the manifest (required on
