@@ -79,13 +79,43 @@ class BleRtkReceiver(private val context: Context? = null) {
     private var rxCharacteristic: BluetoothGattCharacteristic? = null
     private var negotiatedMtu: Int = DEFAULT_MTU
     private var rxBuffer = ByteArray(0)
-    private val pendingWrites = ArrayDeque<ByteArray>()
-    private var writeInFlight = false
+    private var writeChannel = kotlinx.coroutines.channels.Channel<ByteArray>(capacity = 256)
+    private var writeWorkerJob: Job? = null
 
     private var lastDevice: BluetoothDevice? = null
     private var userInitiatedDisconnect = false
     private var reconnectJob: Job? = null
     private var reconnectAttempt = 0
+
+    init {
+        startWriteWorker()
+    }
+
+    private fun startWriteWorker() {
+        writeWorkerJob?.cancel()
+        writeWorkerJob = scope.launch(Dispatchers.IO) {
+            for (chunk in writeChannel) {
+                val g = gatt ?: continue
+                val rx = rxCharacteristic ?: continue
+                try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        g.writeCharacteristic(rx, chunk, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        rx.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                        @Suppress("DEPRECATION")
+                        rx.value = chunk
+                        @Suppress("DEPRECATION")
+                        g.writeCharacteristic(rx)
+                    }
+                } catch (_: Exception) {
+                    // Ignore transient write errors during disconnect
+                }
+                // 8ms pacing prevents Bluetooth HCI buffer congestion and receiver UART FIFO overflow
+                delay(8)
+            }
+        }
+    }
 
     fun connect(device: BluetoothDevice) {
         val ctx = context ?: return
@@ -94,6 +124,7 @@ class BleRtkReceiver(private val context: Context? = null) {
         reconnectJob?.cancel()
         reconnectAttempt = 0
         teardownGatt()
+        if (writeWorkerJob?.isActive != true) startWriteWorker()
         _state.value = BleConnectionState(
             status = BleStatus.CONNECTING,
             deviceName = device.name,
@@ -115,6 +146,8 @@ class BleRtkReceiver(private val context: Context? = null) {
      * SupervisorJob for the process lifetime, not a crash, but there's no reason not to. */
     fun dispose() {
         reconnectJob?.cancel()
+        writeWorkerJob?.cancel()
+        writeChannel.close()
         scope.cancel()
     }
 
@@ -124,8 +157,8 @@ class BleRtkReceiver(private val context: Context? = null) {
         rxCharacteristic = null
         negotiatedMtu = DEFAULT_MTU
         rxBuffer = ByteArray(0)
-        pendingWrites.clear()
-        writeInFlight = false
+        // Drain pending channel writes
+        while (writeChannel.tryReceive().isSuccess) {}
     }
 
     /** Exponential backoff (2s/4s/8s/16s/30s, capped), retried indefinitely -- a user who expects
@@ -140,6 +173,7 @@ class BleRtkReceiver(private val context: Context? = null) {
             delay(delayMs)
             if (userInitiatedDisconnect) return@launch
             teardownGatt()
+            if (writeWorkerJob?.isActive != true) startWriteWorker()
             _state.value = BleConnectionState(
                 status = BleStatus.CONNECTING,
                 deviceName = device.name,
@@ -152,12 +186,13 @@ class BleRtkReceiver(private val context: Context? = null) {
     /** Queues RTCM bytes to send to the receiver, chunked to fit the negotiated MTU. Silently
      * dropped if not connected -- callers should check [state] before relying on delivery. */
     fun sendRtcm(data: ByteArray) {
-        val characteristic = rxCharacteristic ?: return
+        if (rxCharacteristic == null || gatt == null) return
         val chunkSize = (negotiatedMtu - ATT_WRITE_OVERHEAD).coerceAtLeast(20)
         var offset = 0
         while (offset < data.size) {
             val end = (offset + chunkSize).coerceAtMost(data.size)
-            pendingWrites.addLast(data.copyOfRange(offset, end))
+            val chunk = data.copyOfRange(offset, end)
+            writeChannel.trySend(chunk)
             offset = end
         }
         _state.update {
@@ -165,24 +200,6 @@ class BleRtkReceiver(private val context: Context? = null) {
                 bytesToReceiver = it.bytesToReceiver + data.size,
                 messagesSent = it.messagesSent + 1
             )
-        }
-        pumpWriteQueue(characteristic)
-    }
-
-    private fun pumpWriteQueue(characteristic: BluetoothGattCharacteristic) {
-        if (writeInFlight) return
-        val next = pendingWrites.pollFirst() ?: return
-        writeInFlight = true
-        val g = gatt ?: run { writeInFlight = false; return }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            g.writeCharacteristic(characteristic, next, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
-        } else {
-            @Suppress("DEPRECATION")
-            characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
-            @Suppress("DEPRECATION")
-            characteristic.value = next
-            @Suppress("DEPRECATION")
-            g.writeCharacteristic(characteristic)
         }
     }
 
@@ -250,8 +267,7 @@ class BleRtkReceiver(private val context: Context? = null) {
         }
 
         override fun onCharacteristicWrite(g: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
-            writeInFlight = false
-            rxCharacteristic?.let { pumpWriteQueue(it) }
+            // Unused -- outbound stream is handled asynchronously by the writeChannel coroutine worker
         }
 
         override fun onCharacteristicChanged(g: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray) {
