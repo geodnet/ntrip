@@ -24,7 +24,8 @@ than silent omission:
   RTCM3 and ASCII NMEA** dual stream parsing with CRC-24Q validation and per-type message tallies).
 - An offline Leaflet map: base-station/baseline toggle, persistent trajectory, active base station
   matching & green highlight (`#10b981`), live 2D adaptive **static-segment auto-detection**
-  (`location/StaticSegmentDetector.kt`), and manual zoom/pan gesture pause handling.
+  (`location/StaticSegmentDetector.kt`), manual zoom/pan gesture pause handling, and coverage guidance
+  linking to `https://store.geodnet.com/` when no active station is within 40 km.
 - An Android mock location provider and NMEA/RTCM TCP servers for local GIS app integration.
 - The Dual Data Logger: a raw binary stream logger (caster RTCM + BLE raw bytes) and an Android
   GNSS raw measurement/navigation-message/IMU logger (`logging/`).

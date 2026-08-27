@@ -51,6 +51,8 @@ saveable connection profiles instead (add/load/update/delete) — see `CLAUDE.md
 ### 🛰️ 3. GEODNET Base Station Discovery & Active Station Matching
 - **Proximity Discovery & Active Filtering**: Discovers up to 30 nearby GEODNET base stations within a 100 km radius, parsing network statuses (`ACTIVE`, `ONLINE`, `OFFLINE`) from `coverage_stations` API and filtering out offline stations by default.
 - **Connected Base vs Active Network Status**: Clearly distinguishes the actively streaming base station labeled as **`CONNECTED BASE ✓`** (green `#10b981`) from surrounding network base stations labeled with their operational suitability status **`ACTIVE`**.
+- **Coverage Guidance & Base Station Hosting**: Automatically displays a guidance banner if no active station is within 40 km, providing a direct link to purchase and host a base station via [`https://store.geodnet.com/`](https://store.geodnet.com/).
+- **Free Account Registration**: Direct guidance to apply for a free GEODNET account via [`https://geodnet.com/free`](https://geodnet.com/free) when credentials are missing.
 - **Real-Time Baseline & Azimuth**: Displays baseline distance, azimuth degrees, and cardinal bearings to each base station.
 
 ### ⏱️ 4. RTCM 3.x Inspector & Latency Engine
