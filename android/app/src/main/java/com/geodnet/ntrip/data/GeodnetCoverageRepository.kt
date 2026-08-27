@@ -118,10 +118,24 @@ class GeodnetCoverageRepository(private val context: Context) {
     ): List<NearbyStation> {
         if (cachedStations.isEmpty()) return emptyList()
 
-        // Fast bounding box pre-filter in degrees (~111km per degree)
-        val latDelta = (maxRadiusKm / 110.0) + 0.05
+        // 1. First try requested radius (e.g. 100 km)
+        val initial = searchRadius(userLat, userLon, maxRadiusKm, limit, activeOnly)
+        if (initial.isNotEmpty()) return initial
+
+        // 2. If no stations within 100 km, expand radius to 400 km so users see the nearest base stations
+        return searchRadius(userLat, userLon, 400.0, limit, activeOnly)
+    }
+
+    private fun searchRadius(
+        userLat: Double,
+        userLon: Double,
+        radiusKm: Double,
+        limit: Int,
+        activeOnly: Boolean
+    ): List<NearbyStation> {
+        val latDelta = (radiusKm / 110.0) + 0.05
         val cosLat = kotlin.math.cos(Math.toRadians(userLat)).let { if (kotlin.math.abs(it) < 0.01) 0.01 else kotlin.math.abs(it) }
-        val lonDelta = (maxRadiusKm / (110.0 * cosLat)) + 0.05
+        val lonDelta = (radiusKm / (110.0 * cosLat)) + 0.05
 
         val minLat = userLat - latDelta
         val maxLat = userLat + latDelta
@@ -131,13 +145,13 @@ class GeodnetCoverageRepository(private val context: Context) {
         val candidates = ArrayList<NearbyStation>(32)
         for (i in 0 until cachedStations.size) {
             val station = cachedStations[i]
-            // By default, only include active/online stations (exclude offline)
-            if (activeOnly && !station.status.equals("ACTIVE", ignoreCase = true) && !station.status.equals("ONLINE", ignoreCase = true)) {
+            // Exclude explicitly offline stations when activeOnly is true
+            if (activeOnly && station.status.equals("OFFLINE", ignoreCase = true)) {
                 continue
             }
             if (station.lat in minLat..maxLat && station.lng in minLon..maxLon) {
                 val dist = haversineDistanceKm(userLat, userLon, station.lat, station.lng)
-                if (dist <= maxRadiusKm) {
+                if (dist <= radiusKm) {
                     val azimuth = calculateAzimuthDeg(userLat, userLon, station.lat, station.lng)
                     val cardinal = azimuthToCardinal(azimuth)
                     candidates.add(

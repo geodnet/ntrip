@@ -83,6 +83,8 @@ import androidx.compose.ui.window.DialogProperties
 import com.geodnet.ntrip.ble.BleDeviceInfo
 import com.geodnet.ntrip.ble.BleStatus
 import com.geodnet.ntrip.data.NearbyStation
+import com.geodnet.ntrip.location.FixSource
+import com.geodnet.ntrip.location.PositionFix
 import com.geodnet.ntrip.net.TcpServerState
 import com.geodnet.ntrip.ntrip.NtripConfig
 import com.geodnet.ntrip.ntrip.NtripProfile
@@ -233,6 +235,7 @@ fun NtripScreen(viewModel: NtripViewModel) {
             GeodnetCoverageCard(
                 nearbyStations = nearbyStations,
                 isLoading = isCoverageLoading,
+                bestFix = bestFix,
                 baseStation = baseStation,
                 epochStats = epochStats,
                 diffStationId = bestFix?.diffStationId,
@@ -1844,6 +1847,7 @@ private fun ProfileItem(
 private fun GeodnetCoverageCard(
     nearbyStations: List<NearbyStation>,
     isLoading: Boolean,
+    bestFix: PositionFix?,
     baseStation: com.geodnet.ntrip.rtcm.BaseStationFix?,
     epochStats: com.geodnet.ntrip.rtcm.EpochLatencyStats,
     diffStationId: Int?,
@@ -1903,7 +1907,9 @@ private fun GeodnetCoverageCard(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            if (nearbyStations.isNotEmpty()) "${nearbyStations.size} base stations within 100 km" else "Global 19k+ GNSS Network",
+                            if (nearbyStations.isNotEmpty()) "${nearbyStations.size} nearby base stations discovered"
+                            else if (isLoading) "Discovering stations..."
+                            else "Global 19k+ GNSS Network",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -1919,56 +1925,6 @@ private fun GeodnetCoverageCard(
                         CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                     } else {
                         Text("🔄", fontSize = 14.sp)
-                    }
-                }
-            }
-
-            val hasActiveWithin40km = nearbyStations.any {
-                it.distanceKm <= 40.0 && it.status.equals("ACTIVE", ignoreCase = true)
-            }
-
-            if (!hasActiveWithin40km) {
-                val context = LocalContext.current
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(
-                        modifier = Modifier.padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Text("📡", fontSize = 18.sp)
-                            Text(
-                                "No Active Base Station Within 40 km",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                        }
-                        Text(
-                            "For reliable centimeter-level RTK fix accuracy, an active base station within 40 km is recommended. Host your own GEODNET RTK base station to provide local coverage and earn rewards.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Button(
-                            onClick = {
-                                try {
-                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://store.geodnet.com/"))
-                                    context.startActivity(intent)
-                                } catch (_: Exception) {}
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("🛒 Purchase / Host Base Station (store.geodnet.com)", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                        }
                     }
                 }
             }
@@ -2094,7 +2050,57 @@ private fun GeodnetCoverageCard(
                     }
                 }
 
-                // Other close active stations list (up to 30 within 100 km)
+                // If nearest active base is > 40 km, show recommendation banner
+                val hasActiveWithin40km = nearbyStations.any {
+                    it.distanceKm <= 40.0 && it.status.equals("ACTIVE", ignoreCase = true)
+                }
+                if (!hasActiveWithin40km) {
+                    val context = LocalContext.current
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text("📡", fontSize = 16.sp)
+                                Text(
+                                    "No Active Base Station Within 40 km",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                            Text(
+                                "For reliable centimeter-level RTK accuracy, an active base station within 40 km is recommended. Host your own GEODNET RTK base station to provide local coverage.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Button(
+                                onClick = {
+                                    try {
+                                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://store.geodnet.com/"))
+                                        context.startActivity(intent)
+                                    } catch (_: Exception) {}
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("🛒 Purchase / Host Base Station (store.geodnet.com)", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                            }
+                        }
+                    }
+                }
+
+                // Other close active stations list (up to 30 within range)
                 val otherStations = nearbyStations.filter { it != targetStation }
                 if (otherStations.isNotEmpty()) {
                     var expandedList by remember { mutableStateOf(false) }
@@ -2200,6 +2206,59 @@ private fun GeodnetCoverageCard(
                         }
                     }
                 }
+            } else if (isLoading) {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp)
+                        Text(
+                            "Discovering GEODNET Base Stations...",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            "Fetching nearest network base stations for your location...",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                    }
+                }
+            } else if (bestFix != null && (bestFix.latitude != 0.0 || bestFix.longitude != 0.0)) {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            "No GEODNET Base Stations Found Nearby",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            "Current Position: %.4f, %.4f (%s fix)\nTap 🔄 above to refresh coverage stations.".format(
+                                bestFix.latitude,
+                                bestFix.longitude,
+                                if (bestFix.source == com.geodnet.ntrip.location.FixSource.BLE) "BLE RTK" else "Phone GPS"
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                    }
+                }
             } else {
                 Surface(
                     shape = RoundedCornerShape(10.dp),
@@ -2217,7 +2276,7 @@ private fun GeodnetCoverageCard(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            "Connect a BLE RTK receiver or configure manual coordinates to discover closest GEODNET base stations.",
+                            "Waiting for phone GPS or BLE RTK receiver position to discover closest base stations.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center
