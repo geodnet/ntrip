@@ -115,6 +115,16 @@
   var baselineLine = null;
   var trajectoryLayer = L.layerGroup().addTo(map);
   var segmentLayer = L.layerGroup().addTo(map);
+  var nearbyStationLayer = L.layerGroup().addTo(map);
+  var nearbyVisible = true;
+
+  window.map = map;
+
+  function parseJsonData(data) {
+    if (!data) return null;
+    if (typeof data === 'object') return data;
+    try { return JSON.parse(data); } catch(e) { console.error('JSON parse error', e); return null; }
+  }
 
   function createTrajectoryPointMarker(lat, lon, quality) {
     var c = qualityColor(quality || 1);
@@ -222,6 +232,11 @@
     fitToRoverAndBase();
   };
 
+  window.centerOnStation = function (lat, lon) {
+    followRover = false;
+    map.setView([lat, lon], 16, { animate: true });
+  };
+
   window.setRover = function (lat, lon, altM, quality) {
     lastRover = { lat: lat, lon: lon, alt: altM, quality: quality };
     if (!roverMarker) {
@@ -281,7 +296,6 @@
     }
   };
 
-  var nearbyStationLayer = L.layerGroup().addTo(map);
   function createNearbyBaseIcon(isConnected) {
     var color = isConnected ? '#10b981' : '#8b5cf6';
     var size = isConnected ? 26 : 22;
@@ -297,18 +311,18 @@
     });
   }
 
-  window.setNearbyStations = function (stationsJson) {
+  window.setNearbyStations = function (stationsData) {
     nearbyStationLayer.clearLayers();
-    if (!stationsJson) return;
+    if (!stationsData) return;
     try {
-      var stations = JSON.parse(stationsJson);
+      var stations = parseJsonData(stationsData);
+      if (!stations || !stations.length) return;
       for (var i = 0; i < stations.length; i++) {
         var st = stations[i];
-        var displayName = (st.shortName || st.name.slice(-5)).toUpperCase();
+        var displayName = (st.shortName || (st.name ? st.name.slice(-5) : '' + i)).toUpperCase();
         var azimuthStr = st.azimuthDeg !== undefined ? (st.azimuthDeg.toFixed(1) + '° ' + (st.cardinalDirection || '')) : '';
         var isConnected = !!st.isConnected;
         var netStatus = st.status || 'ACTIVE';
-        var isOpt = st.distanceKm <= 25.0;
         var badgeColor = isConnected ? '#10b981' : (netStatus === 'ACTIVE' ? '#06b6d4' : '#64748b');
         var badgeText = isConnected ? 'CONNECTED BASE ✓' : netStatus;
 
@@ -318,9 +332,9 @@
           '<span>Base #' + displayName + '</span>' +
           '<span style="background:' + badgeColor + '20; color:' + badgeColor + '; border:1px solid ' + badgeColor + '; border-radius:4px; padding:1px 6px; font-size:9px; font-weight:700;">' + badgeText + '</span>' +
           '</div>' +
-          '<div style="font-size:12px; color:#334155; margin-top:4px;">Baseline: <b>' + st.distanceKm.toFixed(2) + ' km</b></div>' +
+          '<div style="font-size:12px; color:#334155; margin-top:4px;">Baseline: <b>' + (st.distanceKm ? st.distanceKm.toFixed(2) : '—') + ' km</b></div>' +
           (azimuthStr ? '<div style="font-size:11px; color:#64748b; margin-top:2px;">Azimuth: <b>' + azimuthStr + '</b></div>' : '') +
-          '<div style="font-size:10px; color:#94a3b8; font-family:monospace; margin-top:4px;">' + st.lat.toFixed(6) + ', ' + st.lng.toFixed(6) + '</div>' +
+          '<div style="font-size:10px; color:#94a3b8; font-family:monospace; margin-top:4px;">' + Number(st.lat).toFixed(6) + ', ' + Number(st.lng).toFixed(6) + '</div>' +
           '</div>';
 
         var marker = L.marker([st.lat, st.lng], {
@@ -328,7 +342,7 @@
           zIndexOffset: isConnected ? 1000 : 0
         })
         .bindPopup(popupContent)
-        .bindTooltip('#' + displayName + ' (' + (isConnected ? 'CONNECTED BASE' : (netStatus + ' • ' + st.distanceKm.toFixed(1) + 'km')) + ')', { permanent: false, direction: 'top' });
+        .bindTooltip('#' + displayName + ' (' + (isConnected ? 'CONNECTED BASE' : (netStatus + ' • ' + (st.distanceKm ? st.distanceKm.toFixed(1) : '') + 'km')) + ')', { permanent: false, direction: 'top' });
 
         if (nearbyVisible) marker.addTo(nearbyStationLayer);
       }
@@ -346,11 +360,12 @@
     }
   };
 
-  window.setTrajectory = function (pointsJson) {
+  window.setTrajectory = function (pointsData) {
     trajectoryLayer.clearLayers();
-    if (!pointsJson) return;
+    if (!pointsData) return;
     try {
-      var pts = JSON.parse(pointsJson);
+      var pts = parseJsonData(pointsData);
+      if (!pts || !pts.length) return;
       for (var i = 0; i < pts.length; i++) {
         var p = pts[i];
         createTrajectoryPointMarker(p[0], p[1], p[2]).addTo(trajectoryLayer);
@@ -360,10 +375,11 @@
     }
   };
 
-  window.appendTrajectoryPoints = function (pointsJson) {
-    if (!pointsJson) return;
+  window.appendTrajectoryPoints = function (pointsData) {
+    if (!pointsData) return;
     try {
-      var pts = JSON.parse(pointsJson);
+      var pts = parseJsonData(pointsData);
+      if (!pts || !pts.length) return;
       for (var i = 0; i < pts.length; i++) {
         var p = pts[i];
         createTrajectoryPointMarker(p[0], p[1], p[2]).addTo(trajectoryLayer);
@@ -373,11 +389,12 @@
     }
   };
 
-  window.setStaticSegments = function (segmentsJson) {
+  window.setStaticSegments = function (segmentsData) {
     segmentLayer.clearLayers();
-    if (!segmentsJson) return;
+    if (!segmentsData) return;
     try {
-      var segs = JSON.parse(segmentsJson);
+      var segs = parseJsonData(segmentsData);
+      if (!segs || !segs.length) return;
       for (var i = 0; i < segs.length; i++) {
         var s = segs[i];
         var lat = s[0];
@@ -399,7 +416,7 @@
           '<div style="font-size:12px; color:#334155; margin-top:4px;">Duration: <b>' + Number(durSec).toFixed(1) + 's</b> (' + epochs + ' epochs)</div>' +
           '<div style="font-size:12px; color:#334155;">Height (Up): <b>' + altM.toFixed(4) + ' m</b></div>' +
           '<div style="font-size:11px; color:#475569; margin-top:2px;">σNEU: <b>N:±' + stdN.toFixed(4) + 'm, E:±' + stdE.toFixed(4) + 'm, U:±' + stdU.toFixed(4) + 'm</b></div>' +
-          '<div style="font-size:10px; color:#94a3b8; font-family:monospace; margin-top:4px;">' + lat.toFixed(9) + ', ' + lon.toFixed(9) + '</div>' +
+          '<div style="font-size:10px; color:#94a3b8; font-family:monospace; margin-top:4px;">' + Number(lat).toFixed(9) + ', ' + Number(lon).toFixed(9) + '</div>' +
           '</div>';
 
         L.circleMarker([lat, lon], {
@@ -423,11 +440,11 @@
     map.setView([lat, lon], 19, { animate: true });
   };
 
-  window.zoomToAllStaticSegments = function (segmentsJson) {
-    if (!segmentsJson) return;
+  window.zoomToAllStaticSegments = function (segmentsData) {
+    if (!segmentsData) return;
     try {
-      var segs = JSON.parse(segmentsJson);
-      if (segs.length === 0) return;
+      var segs = parseJsonData(segmentsData);
+      if (!segs || segs.length === 0) return;
       var latLngs = segs.map(function (s) { return [s[0], s[1]]; });
       followRover = false;
       map.fitBounds(L.latLngBounds(latLngs), { padding: [60, 60] });

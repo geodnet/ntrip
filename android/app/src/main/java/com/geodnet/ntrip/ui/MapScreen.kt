@@ -5,6 +5,8 @@ import java.util.Locale
 import android.view.ViewGroup
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.WebChromeClient
+import android.webkit.ConsoleMessage
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -272,6 +274,16 @@ fun MapScreen(viewModel: NtripViewModel) {
                     )
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
+                    settings.allowFileAccess = true
+                    settings.allowContentAccess = true
+                    settings.loadWithOverviewMode = true
+                    settings.useWideViewPort = true
+                    webChromeClient = object : WebChromeClient() {
+                        override fun onConsoleMessage(message: ConsoleMessage?): Boolean {
+                            android.util.Log.d("MapWebView", "${message?.message()} -- line ${message?.lineNumber()} of ${message?.sourceId()}")
+                            return true
+                        }
+                    }
                     webViewClient = object : WebViewClient() {
                         override fun onPageFinished(view: WebView?, url: String?) {
                             sentTrajectoryCount = 0
@@ -448,9 +460,8 @@ fun MapScreen(viewModel: NtripViewModel) {
                             color = MaterialTheme.colorScheme.error,
                             modifier = Modifier
                                 .clip(RoundedCornerShape(4.dp))
-                                .background(MaterialTheme.colorScheme.error.copy(alpha = 0.14f))
-                                .padding(horizontal = 6.dp, vertical = 2.dp)
                                 .clickable { viewModel.clearTrajectory() }
+                                .padding(horizontal = 4.dp, vertical = 2.dp)
                         )
                     }
                 }
@@ -476,7 +487,7 @@ fun MapScreen(viewModel: NtripViewModel) {
             diffStationId = bestFix?.diffStationId,
             onDismiss = { showNearbyDialog = false },
             onCenterOnStation = { lat, lng ->
-                webViewRef?.evaluateJavascript("window.centerRover = null; map.setView([$lat, $lng], 16)", null)
+                webViewRef?.evaluateJavascript("window.centerOnStation($lat, $lng)", null)
                 showNearbyDialog = false
             }
         )
@@ -492,7 +503,7 @@ fun MapScreen(viewModel: NtripViewModel) {
                 showStaticDialog = false
             },
             onZoomToAll = {
-                webViewRef?.evaluateJavascript("window.zoomToAllStaticSegments('${segmentsJson(staticSegments, datumInfo.name)}')", null)
+                webViewRef?.evaluateJavascript("window.zoomToAllStaticSegments(${segmentsJson(staticSegments, datumInfo.name)})", null)
                 showStaticDialog = false
             }
         )
@@ -527,7 +538,7 @@ fun MapScreen(viewModel: NtripViewModel) {
     LaunchedEffect(pageReady, nearbyStations, mapBase, currentStationId) {
         if (pageReady) {
             webViewRef?.evaluateJavascript(
-                "setNearbyStations('${nearbyStationsJson(nearbyStations, mapBase, null, currentStationId)}')",
+                "setNearbyStations(${nearbyStationsJson(nearbyStations, mapBase, null, currentStationId)})",
                 null
             )
         }
@@ -560,17 +571,17 @@ fun MapScreen(viewModel: NtripViewModel) {
         if (!pageReady) return@LaunchedEffect
         if (trajectory.size < sentTrajectoryCount) sentTrajectoryCount = 0
         if (sentTrajectoryCount == 0) {
-            webViewRef?.evaluateJavascript("setTrajectory('${trajectoryJson(trajectory, datumInfo.name)}')", null)
+            webViewRef?.evaluateJavascript("setTrajectory(${trajectoryJson(trajectory, datumInfo.name)})", null)
         } else if (trajectory.size > sentTrajectoryCount) {
             val newPoints = trajectory.subList(sentTrajectoryCount, trajectory.size)
-            webViewRef?.evaluateJavascript("appendTrajectoryPoints('${trajectoryJson(newPoints, datumInfo.name)}')", null)
+            webViewRef?.evaluateJavascript("appendTrajectoryPoints(${trajectoryJson(newPoints, datumInfo.name)})", null)
         }
         sentTrajectoryCount = trajectory.size
     }
 
     LaunchedEffect(pageReady, staticSegments, datumInfo.name) {
         if (pageReady) {
-            webViewRef?.evaluateJavascript("setStaticSegments('${segmentsJson(staticSegments, datumInfo.name)}')", null)
+            webViewRef?.evaluateJavascript("setStaticSegments(${segmentsJson(staticSegments, datumInfo.name)})", null)
         }
     }
 }
