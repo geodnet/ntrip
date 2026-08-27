@@ -16,7 +16,8 @@ data class GeodnetStation(
     val name: String,
     val lat: Double,
     val lng: Double,
-    val status: String = "ACTIVE"
+    val status: String = "ACTIVE",
+    val rtcmStationId: Int? = null
 )
 
 data class NearbyStation(
@@ -27,10 +28,16 @@ data class NearbyStation(
     val azimuthDeg: Double,
     val cardinalDirection: String,
     val isOptimalRtk: Boolean,
-    val status: String = "ACTIVE"
+    val status: String = "ACTIVE",
+    val rtcmStationId: Int? = null
 ) {
     val shortName: String
         get() = name.takeLast(5)
+
+    val effectiveStationId: Int?
+        get() = rtcmStationId
+            ?: shortName.toIntOrNull()
+            ?: name.filter { it.isDigit() }.toIntOrNull()
 }
 
 class GeodnetCoverageRepository(private val context: Context) {
@@ -142,7 +149,8 @@ class GeodnetCoverageRepository(private val context: Context) {
                             azimuthDeg = azimuth,
                             cardinalDirection = cardinal,
                             isOptimalRtk = dist <= 25.0,
-                            status = station.status
+                            status = station.status,
+                            rtcmStationId = station.rtcmStationId
                         )
                     )
                 }
@@ -191,6 +199,29 @@ class GeodnetCoverageRepository(private val context: Context) {
                         }
                     }
 
+                    // Optional RTCM Station ID (e.g. "rtcm_station_id", "rtcmStationId", "station_id", "sta_id", "rtcm_id", "id")
+                    var rtcmStationId: Int? = null
+                    val rtcmKeys = listOf("\"rtcm_station_id\"", "\"rtcmStationId\"", "\"station_id\"", "\"sta_id\"", "\"staId\"", "\"rtcm_id\"", "\"rtcmId\"")
+                    for (k in rtcmKeys) {
+                        val rIdx = jsonStr.indexOf(k, statusEnd)
+                        if (rIdx != -1 && rIdx - statusEnd < 200) {
+                            val rColon = jsonStr.indexOf(':', rIdx + k.length)
+                            if (rColon != -1) {
+                                var vStart = rColon + 1
+                                while (vStart < len && (jsonStr[vStart] == ' ' || jsonStr[vStart] == '\t' || jsonStr[vStart] == '"')) vStart++
+                                var vEnd = vStart
+                                while (vEnd < len && jsonStr[vEnd].isDigit()) vEnd++
+                                if (vEnd > vStart) {
+                                    rtcmStationId = jsonStr.substring(vStart, vEnd).toIntOrNull()
+                                    if (rtcmStationId != null) break
+                                }
+                            }
+                        }
+                    }
+                    if (rtcmStationId == null) {
+                        rtcmStationId = name.takeLast(5).toIntOrNull() ?: name.filter { it.isDigit() }.toIntOrNull()
+                    }
+
                     // Find "lat" within next 300 chars
                     val latIdx = jsonStr.indexOf("\"lat\"", statusEnd)
                     if (latIdx == -1 || latIdx - statusEnd > 300) {
@@ -224,7 +255,7 @@ class GeodnetCoverageRepository(private val context: Context) {
                     val lng = jsonStr.substring(lngStart, lngEnd).toDoubleOrNull()
 
                     if (lat != null && lng != null) {
-                        list.add(GeodnetStation(name = name, lat = lat, lng = lng, status = status))
+                        list.add(GeodnetStation(name = name, lat = lat, lng = lng, status = status, rtcmStationId = rtcmStationId))
                         pos = lngEnd
                     } else {
                         pos = closeQuote + 1
@@ -234,6 +265,64 @@ class GeodnetCoverageRepository(private val context: Context) {
                 return emptyList()
             }
             return list
+        }
+
+        /**
+         * Matches a candidate base station against the active connected base station using
+         * BOTH the RTCM station ID and physical ARP coordinates.
+         *
+         * @param stationLat Latitude of candidate station from Coverage API
+         * @param stationLon Longitude of candidate station from Coverage API
+         * @param stationRtcmId RTCM Station ID from Coverage API or extracted from station name
+         * @param stationName Full station name
+         * @param baseLat Active connected base station latitude from RTCM 1005/1006 (or null)
+         * @param baseLon Active connected base station longitude from RTCM 1005/1006 (or null)
+         * @param activeStaIds List of valid active RTCM Station IDs (from RTCM 1005/1006, MSM header, or GGA NMEA)
+         */
+        fun isStationMatch(
+            stationLat: Double,
+            stationLon: Double,
+            stationRtcmId: Int?,
+            stationName: String,
+            baseLat: Double?,
+            baseLon: Double?,
+            activeStaIds: List<Int>
+        ): Boolean {
+            val hasBaseCoords = baseLat != null && baseLon != null && (baseLat != 0.0 || baseLon != 0.0)
+            val coordDistKm = if (hasBaseCoords) {
+                haversineDistanceKm(stationLat, stationLon, baseLat!!, baseLon!!)
+            } else null
+
+            val effectiveStId = stationRtcmId
+                ?: stationName.takeLast(5).toIntOrNull()
+                ?: stationName.filter { it.isDigit() }.toIntOrNull()
+
+            val hasMatchingId = if (effectiveStId != null && effectiveStId > 0 && activeStaIds.isNotEmpty()) {
+                activeStaIds.contains(effectiveStId)
+            } else false
+
+            // Scenario 1: Both Physical Coordinates AND RTCM Station ID are available
+            if (coordDistKm != null && activeStaIds.isNotEmpty()) {
+                // If coordinate distance is < 1.0 km AND station ID matches -> 100% Definitive match
+                if (coordDistKm < 1.0 && hasMatchingId) return true
+                // If coordinates are exact (< 300m) and ID is matching or not explicitly conflicting
+                if (coordDistKm < 0.3) return true
+                // If station ID matches and distance is very close (< 2.0 km)
+                if (hasMatchingId && coordDistKm < 2.0) return true
+                return false
+            }
+
+            // Scenario 2: Only Physical Coordinates are available
+            if (coordDistKm != null) {
+                return coordDistKm < 0.5
+            }
+
+            // Scenario 3: Only RTCM Station ID is available (e.g. before RTCM 1005 coordinate arrives)
+            if (activeStaIds.isNotEmpty()) {
+                return hasMatchingId
+            }
+
+            return false
         }
 
         fun haversineDistanceKm(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {

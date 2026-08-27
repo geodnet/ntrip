@@ -82,4 +82,73 @@ class GeodnetCoverageRepositoryTest {
         )
         assertEquals("69D0C", st.shortName)
     }
+
+    @Test
+    fun parseStationsJson_withRtcmStationId_parsesCorrectly() {
+        val sampleJson = """
+        {
+            "code": 0,
+            "data": [
+                { "name": "GEOD_12345", "status": "ACTIVE", "rtcm_station_id": 12345, "lat": 37.399, "lng": -121.976 },
+                { "name": "GEOD_99999", "status": "ACTIVE", "station_id": 99999, "lat": 37.400, "lng": -121.980 }
+            ]
+        }
+        """.trimIndent()
+
+        val stations = GeodnetCoverageRepository.parseStationsJson(sampleJson)
+        assertEquals(2, stations.size)
+        assertEquals(12345, stations[0].rtcmStationId)
+        assertEquals(99999, stations[1].rtcmStationId)
+    }
+
+    @Test
+    fun isStationMatch_dualCondition_matchesAccurately() {
+        // 1. Both RTCM Station ID and Coordinates match (< 1km and same ID) -> TRUE
+        val matchBoth = GeodnetCoverageRepository.isStationMatch(
+            stationLat = 37.399256,
+            stationLon = -121.976698,
+            stationRtcmId = 1234,
+            stationName = "GEOD_1234",
+            baseLat = 37.399300,
+            baseLon = -121.976700,
+            activeStaIds = listOf(1234)
+        )
+        assertTrue(matchBoth)
+
+        // 2. Same ID but coordinates 50 km away -> FALSE (prevents false matches across states)
+        val mismatchCoords = GeodnetCoverageRepository.isStationMatch(
+            stationLat = 37.399256,
+            stationLon = -121.976698,
+            stationRtcmId = 1234,
+            stationName = "GEOD_1234",
+            baseLat = 38.000000,
+            baseLon = -121.000000,
+            activeStaIds = listOf(1234)
+        )
+        org.junit.Assert.assertFalse(mismatchCoords)
+
+        // 3. Exact coordinates match (< 300m) even if activeStaIds is empty -> TRUE
+        val matchCoordsOnly = GeodnetCoverageRepository.isStationMatch(
+            stationLat = 37.399256,
+            stationLon = -121.976698,
+            stationRtcmId = 1234,
+            stationName = "GEOD_1234",
+            baseLat = 37.399260,
+            baseLon = -121.976700,
+            activeStaIds = emptyList()
+        )
+        assertTrue(matchCoordsOnly)
+
+        // 4. Station ID match when coordinates not yet available (0.0, 0.0) -> TRUE
+        val matchIdOnly = GeodnetCoverageRepository.isStationMatch(
+            stationLat = 37.399256,
+            stationLon = -121.976698,
+            stationRtcmId = 1234,
+            stationName = "GEOD_1234",
+            baseLat = 0.0,
+            baseLon = 0.0,
+            activeStaIds = listOf(1234)
+        )
+        assertTrue(matchIdOnly)
+    }
 }

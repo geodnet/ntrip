@@ -1850,31 +1850,20 @@ private fun GeodnetCoverageCard(
     onRefresh: () -> Unit,
 ) {
     fun isStationMatched(st: NearbyStation): Boolean {
-        // 1. Strict Physical Coordinate Match from RTCM 1005/1006 (within 500 meters)
-        if (baseStation != null && (baseStation.latDeg != 0.0 || baseStation.lonDeg != 0.0)) {
-            val distKm = com.geodnet.ntrip.data.GeodnetCoverageRepository.haversineDistanceKm(
-                st.lat, st.lng, baseStation.latDeg, baseStation.lonDeg
-            )
-            return distKm < 0.5
-        }
-
-        // 2. Exact Numeric Station ID Match (only when coordinates are not yet available)
         val validIds = listOfNotNull(
             baseStation?.staId?.takeIf { it > 0 },
             epochStats.baseStationId?.takeIf { it > 0 },
             diffStationId?.takeIf { it > 0 }
         )
-
-        if (validIds.isEmpty()) return false
-
-        val stNumericId = st.shortName.toIntOrNull()
-            ?: st.name.filter { it.isDigit() }.toIntOrNull()
-
-        if (stNumericId != null && stNumericId > 0) {
-            return validIds.any { it == stNumericId }
-        }
-
-        return false
+        return com.geodnet.ntrip.data.GeodnetCoverageRepository.isStationMatch(
+            stationLat = st.lat,
+            stationLon = st.lng,
+            stationRtcmId = st.rtcmStationId,
+            stationName = st.name,
+            baseLat = baseStation?.latDeg,
+            baseLon = baseStation?.lonDeg,
+            activeStaIds = validIds
+        )
     }
 
     Card(

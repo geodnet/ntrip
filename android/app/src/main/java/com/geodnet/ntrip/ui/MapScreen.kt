@@ -777,25 +777,26 @@ private fun nearbyStationsJson(
     diffStationId: Int? = null
 ): String {
     val arr = JSONArray()
+    val validIds = listOfNotNull(
+        baseStation?.staId?.takeIf { it > 0 },
+        epochStats?.baseStationId?.takeIf { it > 0 },
+        diffStationId?.takeIf { it > 0 }
+    )
     for (st in stations) {
-        val isConnected = if (baseStation != null && (baseStation.latDeg != 0.0 || baseStation.lonDeg != 0.0)) {
-            val distKm = com.geodnet.ntrip.data.GeodnetCoverageRepository.haversineDistanceKm(
-                st.lat, st.lng, baseStation.latDeg, baseStation.lonDeg
-            )
-            distKm < 0.5
-        } else {
-            val validIds = listOfNotNull(
-                baseStation?.staId?.takeIf { it > 0 },
-                epochStats?.baseStationId?.takeIf { it > 0 },
-                diffStationId?.takeIf { it > 0 }
-            )
-            val stNumericId = st.shortName.toIntOrNull() ?: st.name.filter { it.isDigit() }.toIntOrNull()
-            stNumericId != null && stNumericId > 0 && validIds.contains(stNumericId)
-        }
+        val isConnected = com.geodnet.ntrip.data.GeodnetCoverageRepository.isStationMatch(
+            stationLat = st.lat,
+            stationLon = st.lng,
+            stationRtcmId = st.rtcmStationId,
+            stationName = st.name,
+            baseLat = baseStation?.latDeg,
+            baseLon = baseStation?.lonDeg,
+            activeStaIds = validIds
+        )
 
         val obj = JSONObject().apply {
             put("name", st.name)
             put("shortName", st.shortName)
+            put("rtcmStationId", st.effectiveStationId)
             put("lat", st.lat)
             put("lng", st.lng)
             put("distanceKm", st.distanceKm)
@@ -824,27 +825,20 @@ private fun NearbyStationsDialog(
     onCenterOnStation: (Double, Double) -> Unit
 ) {
     fun isStationMatched(st: NearbyStation): Boolean {
-        if (baseStation != null && (baseStation.latDeg != 0.0 || baseStation.lonDeg != 0.0)) {
-            val distKm = com.geodnet.ntrip.data.GeodnetCoverageRepository.haversineDistanceKm(
-                st.lat, st.lng, baseStation.latDeg, baseStation.lonDeg
-            )
-            if (distKm < 0.5) return true
-        }
-
         val validIds = listOfNotNull(
             baseStation?.staId?.takeIf { it > 0 },
             epochStats?.baseStationId?.takeIf { it > 0 },
             diffStationId?.takeIf { it > 0 }
         )
-
-        if (validIds.isNotEmpty()) {
-            val stNumericId = st.shortName.toIntOrNull() ?: st.name.filter { it.isDigit() }.toIntOrNull()
-            if (stNumericId != null && stNumericId > 0 && validIds.contains(stNumericId)) {
-                return true
-            }
-        }
-
-        return false
+        return com.geodnet.ntrip.data.GeodnetCoverageRepository.isStationMatch(
+            stationLat = st.lat,
+            stationLon = st.lng,
+            stationRtcmId = st.rtcmStationId,
+            stationName = st.name,
+            baseLat = baseStation?.latDeg,
+            baseLon = baseStation?.lonDeg,
+            activeStaIds = validIds
+        )
     }
 
     val hasActiveStation = nearbyStations.any { isStationMatched(it) }
