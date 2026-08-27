@@ -149,4 +149,37 @@ class StaticSegmentDetectorTest {
         assertTrue(seg.stdDev2dM > 0.0)
         assertTrue(seg.stdDev3dM >= seg.stdDev2dM)
     }
+
+    @Test
+    fun `handles high sample rate 10Hz static detection and dropout accurately`() {
+        val detector = StaticSegmentDetector(distanceCutoffM = 0.05, minDurationMs = 5_000, rtkFixOnly = true, maxNonRtkDropoutMs = 3_000)
+
+        // Feed 10 seconds @ 10Hz (100 epochs, 100ms apart)
+        for (i in 0 until 100) {
+            val t = i * 100L
+            val jitter = (i % 5) * 0.00000001
+            detector.accept(base.copy(latitude = 37.0 + jitter, longitude = -122.0 + jitter, altitudeM = 10.0 + jitter * 1000.0, timestampMs = t, fixQuality = 4))
+        }
+
+        // Live static segment should have 100 epochs, ~9.9s duration
+        val active = detector.currentSegment()
+        assertNotNull(active)
+        assertEquals(100, active!!.epochCount)
+        assertEquals(9.9, active.durationSec, 0.05)
+
+        // 1.5 seconds of transient float fixes @ 10Hz (15 epochs) -> should be tolerated
+        for (i in 100 until 115) {
+            val t = i * 100L
+            val res = detector.accept(base.copy(timestampMs = t, fixQuality = 5))
+            assertNull(res)
+        }
+        assertNotNull(detector.currentSegment())
+
+        // Rover moves away at epoch 120 (12.0s) -> breaks and finalizes static segment
+        val breakFix = base.copy(latitude = 37.001, longitude = -122.001, timestampMs = 12_000L, fixQuality = 4)
+        val finalized = detector.accept(breakFix)
+        assertNotNull(finalized)
+        assertEquals(100, finalized!!.epochCount)
+        assertEquals(9.9, finalized.durationSec, 0.05)
+    }
 }
