@@ -1982,23 +1982,8 @@ private fun GeodnetCoverageCard(
                                 )
                             }
 
-                            // Connected RTCM or Network Status + Quality Badge
-                            if (isMatched) {
-                                Surface(
-                                    shape = RoundedCornerShape(6.dp),
-                                    color = SurveyColors.Connected.copy(alpha = 0.2f),
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, SurveyColors.Connected)
-                                ) {
-                                    Text(
-                                        text = "CONNECTED BASE ✓",
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = SurveyColors.Connected,
-                                        fontSize = 11.sp
-                                    )
-                                }
-                            } else {
+                            // Status + Quality Badge when not connected
+                            if (!isMatched) {
                                 Row(
                                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                                     verticalAlignment = Alignment.CenterVertically
