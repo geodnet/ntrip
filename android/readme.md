@@ -44,6 +44,7 @@ saveable connection profiles instead (add/load/update/delete) — see `CLAUDE.md
 - **GEODNET Regional Datum Resolver**: Automatically resolves dynamic geodetic datums from rover coordinates for `AUTO` and explicit mountpoints (`AUTO_ITRF2020`, `AUTO_WGS84`, `NATRF2020`, `SIRGAS2000`, etc.) per `geodnet.github.io/rtk`.
 - **Live NTRIP Sourcetable Pulling**: Query and browse available mountpoints, formats (`RTCM 3.3`), constellations (`GPS+GLO+GAL+BDS`), and NMEA requirements directly from any caster.
 - **NTRIP Profile Manager**: Manage, save, and switch named connection profiles across multiple casters.
+- **Instant Network Restoration Auto-Reconnect**: Monitors Android OS network state via `ConnectivityManager.NetworkCallback`. Automatically and immediately re-establishes the NTRIP connection as soon as internet connectivity returns after cellular/WiFi drops.
 - **Smart Phone Location Fallback**: Automatically initializes caster connection with phone GPS fix when no BLE RTK receiver is connected.
 - **GNSS Ephemeris Filtering**: Default-enabled toggle to filter out heavy satellite ephemeris frames (`1019`, `1020`, `1041-1046`) before forwarding over BLE.
 
@@ -60,7 +61,7 @@ saveable connection profiles instead (add/load/update/delete) — see `CLAUDE.md
 - **Epoch Latency Engine**: Calculates epoch duration, first message latency, last message latency, and differential age.
 
 ### 🗺️ 5. Offline Leaflet Map, Survey HUD & Coordinate Datum Transformation
-- **Offline Leaflet Map**: Embedded satellite and street basemaps with persistent layer selection across sessions.
+- **Offline Leaflet Map with Canvas Acceleration**: Embedded satellite and street basemaps with hardware-accelerated HTML5 `<canvas>` rendering (`preferCanvas: true`) for butter-smooth trajectory visualization even at high sample rates (>5Hz, 10Hz, 20Hz).
 - **Tectonic Plate Coordinate Transformation (14-Parameter Time-Dependent Helmert)**: Ported from standard geodetic transformation engines (`coord.c`/`coord.h`). Automatically converts regional coordinates under `AUTO` (USA `NAD83(2011)/PA11/MA11`, Europe `ETRS89/ETRF2000`, Australia `GDA2020/GDA94`, New Zealand `NZGD2000`, South America `SIRGAS2000`, South Africa `ITRF1991`, Asia `ITRF2014/ITRF2008/CGCS2000/TUREF`) back to global **WGS84 / ITRF2020(2020.0)** for centimeter-accurate alignment on Google/ESRI/OSM tiles.
 - **Interactive Gestures & Auto-Zoom**: Auto-zooms to rover on launch and smoothly pauses auto-zoom/following during manual pan/zoom gestures (with 1-tap re-center FAB).
 - **Point-Based Trajectory Tracking**: Renders discrete survey track points color-coded by RTK fix quality (Green: RTK Fix, Amber: RTK Float, Blue: DGPS, Pink: Single).

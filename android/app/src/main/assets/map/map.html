@@ -85,7 +85,12 @@
   })() || 'Streets';
   var initialLayer = savedBaseMap === 'Satellite' ? satellite : streets;
 
-  var map = L.map('map', { zoomControl: false, attributionControl: false, layers: [initialLayer] }).setView([0, 0], 2);
+  var map = L.map('map', {
+    zoomControl: false,
+    attributionControl: false,
+    layers: [initialLayer],
+    preferCanvas: true
+  }).setView([0, 0], 2);
   L.control.layers({ 'Streets': streets, 'Satellite': satellite }, null, { position: 'bottomright', collapsed: true }).addTo(map);
 
   map.on('baselayerchange', function (e) {
@@ -125,6 +130,7 @@
   var baseVisible = false;
   var followRover = true;
   var lastRover = null;
+  var lastQuality = null;
   var lastBase = null;
   var hasCenteredOnce = false;
 
@@ -181,12 +187,16 @@
   }
 
   function updateBaselineLine() {
-    if (baselineLine) { map.removeLayer(baselineLine); baselineLine = null; }
     if (baseVisible && lastBase && lastRover) {
-      baselineLine = L.polyline(
-        [[lastRover.lat, lastRover.lon], [lastBase.lat, lastBase.lon]],
-        { color: '#f59e0b', weight: 2.5, dashArray: '6,6', opacity: 0.9 }
-      ).addTo(map);
+      var latLngs = [[lastRover.lat, lastRover.lon], [lastBase.lat, lastBase.lon]];
+      if (baselineLine) {
+        baselineLine.setLatLngs(latLngs);
+      } else {
+        baselineLine = L.polyline(latLngs, { color: '#f59e0b', weight: 2.5, dashArray: '6,6', opacity: 0.9 }).addTo(map);
+      }
+    } else if (baselineLine) {
+      map.removeLayer(baselineLine);
+      baselineLine = null;
     }
   }
 
@@ -216,9 +226,13 @@
     lastRover = { lat: lat, lon: lon, alt: altM, quality: quality };
     if (!roverMarker) {
       roverMarker = L.marker([lat, lon], { icon: roverIcon(quality) }).addTo(map);
+      lastQuality = quality;
     } else {
       roverMarker.setLatLng([lat, lon]);
-      roverMarker.setIcon(roverIcon(quality));
+      if (quality !== lastQuality) {
+        roverMarker.setIcon(roverIcon(quality));
+        lastQuality = quality;
+      }
     }
     updateBaselineLine();
     updateInfoPanel();
@@ -227,7 +241,7 @@
         map.setView([lat, lon], 18);
         hasCenteredOnce = true;
       } else if (followRover) {
-        map.panTo([lat, lon], { animate: true });
+        map.panTo([lat, lon], { animate: false, duration: 0 });
       }
     }
   };

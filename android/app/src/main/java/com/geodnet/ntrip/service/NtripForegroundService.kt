@@ -5,6 +5,10 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.os.Binder
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
@@ -178,10 +182,13 @@ class NtripForegroundService : Service() {
     }
 
     private val soundNotifier by lazy { com.geodnet.ntrip.audio.RtkSoundNotifier() }
+    private val connectivityManager by lazy { getSystemService(ConnectivityManager::class.java) }
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        registerNetworkCallback()
         serviceScope.launch { locationAggregator.fix.collect { mockLocationProvider.update(it) } }
         serviceScope.launch {
             locationAggregator.fix.collect { fix ->
@@ -359,9 +366,56 @@ class NtripForegroundService : Service() {
         stopForeground(STOP_FOREGROUND_REMOVE)
     }
 
+    private fun registerNetworkCallback() {
+        val request = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .build()
+
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                // Internet connection restored -- immediately trigger reconnect if session was active
+                serviceScope.launch {
+                    val cfg = currentConfig
+                    if (cfg != null && !userInitiatedDisconnect && _serviceState.value.status != NtripStatus.CONNECTED) {
+                        reconnectJob?.cancel()
+                        reconnectAttempt = 0
+                        startInternal(cfg)
+                    }
+                }
+            }
+
+            override fun onLost(network: Network) {
+                // Internet connection dropped
+                serviceScope.launch {
+                    if (!userInitiatedDisconnect && _serviceState.value.status == NtripStatus.CONNECTED) {
+                        _serviceState.value = NtripState(
+                            status = NtripStatus.ERROR,
+                            errorMessage = "Internet disconnected — waiting for network...",
+                            bytesReceived = _serviceState.value.bytesReceived
+                        )
+                        updateNotification(_serviceState.value)
+                        client?.stop()
+                    }
+                }
+            }
+        }
+        networkCallback = callback
+        try {
+            connectivityManager?.registerNetworkCallback(request, callback)
+        } catch (_: Exception) {
+            // Fallback for mock/test environments where network callback registration might be restricted
+        }
+    }
+
     override fun onDestroy() {
         userInitiatedDisconnect = true
         reconnectJob?.cancel()
+        networkCallback?.let { callback ->
+            try {
+                connectivityManager?.unregisterNetworkCallback(callback)
+            } catch (_: Exception) {}
+        }
+        networkCallback = null
         client?.stop()
         staticSegmentDetector.flush()?.let { segment ->
             _staticSegments.update { it + segment }

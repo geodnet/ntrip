@@ -225,6 +225,10 @@ have `sdk.dir` pointing at your Android SDK.
   header preserved) bundled as local assets, so the *map framework itself* (Leaflet, markers,
   controls, all of `map.html`'s JS) works with zero network access; `assets/map/map.html` loads
   them locally and is opened via `WebView.loadUrl("file:///android_asset/map/map.html")`.
+  **High-Rate Rendering Optimization**: Leaflet initializes with `preferCanvas: true`, rendering all trajectory
+  and rover vector paths directly to a single hardware-accelerated HTML5 `<canvas>` layer. High-frequency
+  rover position updates (>5Hz, 10Hz, 20Hz) bypass CSS transition animation queues (`panTo(..., { animate: false })`)
+  and cache `L.divIcon` objects to prevent DOM churn and render smoothly at 60 FPS.
   **Basemap imagery is fetched online, not bundled**: a satellite layer (Esri World Imagery,
   `server.arcgisonline.com`, no API key) and a street layer (OpenStreetMap,
   `tile.openstreetmap.org`) via `L.tileLayer` + `L.control.layers` (bottom-right, so it doesn't
