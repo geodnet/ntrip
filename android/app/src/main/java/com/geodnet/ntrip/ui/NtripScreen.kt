@@ -74,7 +74,10 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.geodnet.ntrip.ble.BleDeviceInfo
@@ -200,7 +203,13 @@ fun NtripScreen(viewModel: NtripViewModel) {
                 isConnected = isConnected,
                 bestFix = bestFix,
                 onOpenSettings = { showSettingsDialog = true },
-                onConnect = { viewModel.connect() },
+                onConnect = {
+                    if (config.username.isBlank() || config.password.isBlank()) {
+                        showSettingsDialog = true
+                    } else {
+                        viewModel.connect()
+                    }
+                },
                 onDisconnect = { viewModel.disconnect() },
             )
 
@@ -1475,6 +1484,8 @@ private fun NtripSettingsDialog(
     onDismiss: () -> Unit,
 ) {
     var showPassword by remember { mutableStateOf(false) }
+    var validationAttempted by remember { mutableStateOf(false) }
+    val context = LocalContext.current
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(
@@ -1503,6 +1514,71 @@ private fun NtripSettingsDialog(
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
+                    // Account Guidance & Application Banner
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (validationAttempted && (username.isBlank() || password.isBlank()))
+                            MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f)
+                        else
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            if (validationAttempted && (username.isBlank() || password.isBlank()))
+                                MaterialTheme.colorScheme.error
+                            else
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text("🔑", fontSize = 16.sp)
+                                Text(
+                                    if (validationAttempted && (username.isBlank() || password.isBlank()))
+                                        "NTRIP Credentials Required"
+                                    else
+                                        "NTRIP Account & Credentials",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (validationAttempted && (username.isBlank() || password.isBlank()))
+                                        MaterialTheme.colorScheme.error
+                                    else
+                                        MaterialTheme.colorScheme.primary
+                                )
+                            }
+                            Text(
+                                if (validationAttempted && (username.isBlank() || password.isBlank()))
+                                    "A valid username and password are required to connect to the caster. Please enter your credentials below, or apply for an account:"
+                                else
+                                    "An active NTRIP account is required to stream RTCM corrections. Enter your username & password below, or apply for a free GEODNET RTK account:",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Button(
+                                onClick = {
+                                    try {
+                                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://console.geodnet.com"))
+                                        context.startActivity(intent)
+                                    } catch (_: Exception) {}
+                                },
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary
+                                ),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                            ) {
+                                Text("🌐 Apply for Account (console.geodnet.com)", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            }
+                        }
+                    }
+
                     Text("SAVED PROFILES", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                     if (profiles.isEmpty()) {
                         Text("No saved profiles yet", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1596,16 +1672,30 @@ private fun NtripSettingsDialog(
                     }
                     OutlinedTextField(
                         value = username,
-                        onValueChange = onUsernameChange,
-                        label = { Text("Username") },
+                        onValueChange = {
+                            validationAttempted = false
+                            onUsernameChange(it)
+                        },
+                        label = { Text("Username *") },
+                        isError = validationAttempted && username.isBlank(),
+                        supportingText = if (validationAttempted && username.isBlank()) {
+                            { Text("⚠️ Username is required", color = MaterialTheme.colorScheme.error) }
+                        } else null,
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(10.dp)
                     )
                     OutlinedTextField(
                         value = password,
-                        onValueChange = onPasswordChange,
-                        label = { Text("Password") },
+                        onValueChange = {
+                            validationAttempted = false
+                            onPasswordChange(it)
+                        },
+                        label = { Text("Password *") },
+                        isError = validationAttempted && password.isBlank(),
+                        supportingText = if (validationAttempted && password.isBlank()) {
+                            { Text("⚠️ Password is required", color = MaterialTheme.colorScheme.error) }
+                        } else null,
                         singleLine = true,
                         trailingIcon = {
                             TextButton(onClick = { showPassword = !showPassword }) {
@@ -1652,7 +1742,13 @@ private fun NtripSettingsDialog(
                 }
 
                 Button(
-                    onClick = onConnect,
+                    onClick = {
+                        if (username.isBlank() || password.isBlank()) {
+                            validationAttempted = true
+                        } else {
+                            onConnect()
+                        }
+                    },
                     modifier = Modifier.fillMaxWidth().padding(18.dp),
                     shape = RoundedCornerShape(12.dp)
                 ) {
