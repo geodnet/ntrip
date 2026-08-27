@@ -1235,22 +1235,24 @@ private fun RtcmLiveLogCard(
     onClearLog: () -> Unit
 ) {
     var selectedFilter by remember { mutableStateOf("ALL") }
-    var autoScroll by remember { mutableStateOf(true) }
+    var isPaused by remember { mutableStateOf(false) }
+    var frozenMessages by remember { mutableStateOf<List<RtcmMessage>>(emptyList()) }
     val listState = rememberLazyListState()
 
-    val filteredMessages = remember(messages, selectedFilter) {
+    val sourceMessages = if (isPaused) frozenMessages else messages
+    val filteredMessages = remember(sourceMessages, selectedFilter) {
         when (selectedFilter) {
-            "MSM" -> messages.filter { it.msgKey.startsWith("107") || it.msgKey.startsWith("108") || it.msgKey.startsWith("109") || it.msgKey.startsWith("111") || it.msgKey.startsWith("112") }
-            "EPH" -> messages.filter { it.msgKey in listOf("1019", "1020", "1042", "1044", "1045", "1046") }
-            "STA" -> messages.filter { it.msgKey in listOf("1005", "1006", "1033") }
-            "ERR" -> messages.filter { !it.crcOk }
-            else -> messages
+            "MSM" -> sourceMessages.filter { it.msgKey.startsWith("107") || it.msgKey.startsWith("108") || it.msgKey.startsWith("109") || it.msgKey.startsWith("111") || it.msgKey.startsWith("112") }
+            "EPH" -> sourceMessages.filter { it.msgKey in listOf("1019", "1020", "1042", "1044", "1045", "1046") }
+            "STA" -> sourceMessages.filter { it.msgKey in listOf("1005", "1006", "1033") }
+            "ERR" -> sourceMessages.filter { !it.crcOk }
+            else -> sourceMessages
         }
     }
 
-    LaunchedEffect(filteredMessages.size, autoScroll) {
-        if (autoScroll && filteredMessages.isNotEmpty()) {
-            listState.animateScrollToItem(0)
+    LaunchedEffect(filteredMessages.size, isPaused) {
+        if (!isPaused && filteredMessages.isNotEmpty()) {
+            listState.scrollToItem(0)
         }
     }
 
@@ -1269,10 +1271,46 @@ private fun RtcmLiveLogCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Live Decode Log", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text("Live Decode Log", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    if (isPaused) {
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = MaterialTheme.colorScheme.error.copy(alpha = 0.15f),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.error)
+                        ) {
+                            Text(
+                                "PAUSED",
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.error,
+                                fontSize = 9.sp
+                            )
+                        }
+                    }
+                }
+
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    TextButton(onClick = { autoScroll = !autoScroll }) {
-                        Text(if (autoScroll) "Auto-Scroll: ON" else "Paused", fontSize = 12.sp)
+                    TextButton(
+                        onClick = {
+                            if (!isPaused) {
+                                frozenMessages = messages
+                                isPaused = true
+                            } else {
+                                isPaused = false
+                            }
+                        }
+                    ) {
+                        Text(
+                            if (isPaused) "▶ Resume" else "⏸ Pause",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isPaused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             }

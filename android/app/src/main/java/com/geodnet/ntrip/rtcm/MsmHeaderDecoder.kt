@@ -6,6 +6,7 @@ data class MsmHeaderInfo(
     val towSec: Double?,
     val glonassDow: Int?,
     val glonassTodSec: Double?,
+    val isMoreMessagesInEpoch: Boolean, // Multiple Message Bit: 1 = more messages in epoch, 0 = last message of epoch
     val nsat: Int,
     val nsig: Int,
     val sigNames: List<String>,
@@ -36,7 +37,7 @@ object MsmHeaderDecoder {
             }
         }
 
-        br.skip(1) // sync
+        val sync = br.readUnsigned(1) != 0L // Multiple Message Bit (1 = more to follow, 0 = last of epoch)
         br.skip(3) // iod
         br.skip(7) // reserved
         br.skip(2) // clk steering
@@ -55,6 +56,6 @@ object MsmHeaderDecoder {
 
         val sigNames = sigIds.map { id -> sys.sigTable?.getOrNull(id - 1)?.takeIf { it.isNotEmpty() } ?: "#$id" }
 
-        return MsmHeaderInfo(staId, towSec, glonassDow, glonassTodSec, nsat, sigIds.size, sigNames)
+        return MsmHeaderInfo(staId, towSec, glonassDow, glonassTodSec, sync, nsat, sigIds.size, sigNames)
     }
 }

@@ -173,11 +173,13 @@ class RtcmFrameParser(private val refPosition: () -> Triple<Double, Double, Doub
         val msmSys = getMsmSystem(msgType)
         if (msgType in LEGACY_OBSERVATION_TYPES || msmSys != null) {
             var baseTimeTagUtcSec: Double? = null
+            var isMoreMessagesInEpoch: Boolean? = null
             var staId: Int? = null
             if (msmSys != null) {
                 try {
                     val h = MsmHeaderDecoder.decode(payload, msmSys)
                     staId = h.staId
+                    isMoreMessagesInEpoch = h.isMoreMessagesInEpoch
                     baseTimeTagUtcSec = when {
                         h.glonassTodSec != null -> {
                             (h.glonassTodSec - 3.0 * 3600.0).mod(86400.0)
@@ -194,6 +196,7 @@ class RtcmFrameParser(private val refPosition: () -> Triple<Double, Double, Doub
             }
             epochEngine.onObservationMessage(
                 msgType = msgType,
+                isMoreMessagesInEpoch = isMoreMessagesInEpoch,
                 baseTimeTagUtcSec = baseTimeTagUtcSec,
                 staId = staId
             )
@@ -297,9 +300,7 @@ class RtcmFrameParser(private val refPosition: () -> Triple<Double, Double, Doub
     companion object {
         private const val SYNC_BYTE: Byte = 0xD3.toByte()
 
-        /** Legacy (non-MSM) GPS/GLONASS observation message types, per readme.md section 3 --
-         * these aren't detail-decoded (only counted) but still count as "an epoch arrived" for
-         * [EpochLatencyEngine] purposes. */
-        private val LEGACY_OBSERVATION_TYPES = 1001..1012
+        /** Legacy (non-MSM) GPS/GLONASS observation message types (excluding 1005-1008 station/antenna metadata). */
+        private val LEGACY_OBSERVATION_TYPES = setOf(1001, 1002, 1003, 1004, 1009, 1010, 1011, 1012)
     }
 }

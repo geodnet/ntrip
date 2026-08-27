@@ -18,30 +18,29 @@ class EpochLatencyEngineTest {
     }
 
     @Test
-    fun `msm messages with same time tag belong to the same epoch regardless of network jitter`() {
+    fun `msm sync flag correctly groups and completes epochs matching gps 1074 count`() {
         val engine = EpochLatencyEngine(gapNanos)
         engine.onConnectionStart(nowNanos = 0L)
 
-        // Epoch 1 (time tag 12345.0s): 1074 GPS, 1084 GLO, 1094 GAL, 1124 BDS across 350ms
-        engine.onObservationMessage(nowNanos = 0L, msgType = 1074, baseTimeTagUtcSec = 12345.0)
-        engine.onObservationMessage(nowNanos = 50_000_000L, msgType = 1084, baseTimeTagUtcSec = 12345.0)
-        engine.onObservationMessage(nowNanos = 250_000_000L, msgType = 1094, baseTimeTagUtcSec = 12345.0) // 200ms+ jitter
-        engine.onObservationMessage(nowNanos = 350_000_000L, msgType = 1124, baseTimeTagUtcSec = 12345.0)
+        // Epoch 1: 1074 (sync=true), 1084 (sync=true), 1094 (sync=true), 1124 (sync=false)
+        engine.onObservationMessage(nowNanos = 0L, msgType = 1074, isMoreMessagesInEpoch = true, baseTimeTagUtcSec = 12345.0)
+        engine.onObservationMessage(nowNanos = 50_000_000L, msgType = 1084, isMoreMessagesInEpoch = true, baseTimeTagUtcSec = 12345.0)
+        engine.onObservationMessage(nowNanos = 100_000_000L, msgType = 1094, isMoreMessagesInEpoch = true, baseTimeTagUtcSec = 12345.0)
+        engine.onObservationMessage(nowNanos = 150_000_000L, msgType = 1124, isMoreMessagesInEpoch = false, baseTimeTagUtcSec = 12345.0)
 
-        val s1 = engine.snapshot(nowNanos = 350_000_000L)
+        val s1 = engine.snapshot(nowNanos = 150_000_000L)
         assertEquals(1L, s1.epochsCompleted)
-        assertEquals(4, s1.epochMessageCount)
+        assertEquals(150.0, s1.lastEpochSpanMs!!, 1e-3)
 
-        // Epoch 2 (time tag 12346.0s): next second
-        engine.onObservationMessage(nowNanos = 1_000_000_000L, msgType = 1074, baseTimeTagUtcSec = 12346.0)
-        engine.onObservationMessage(nowNanos = 1_050_000_000L, msgType = 1084, baseTimeTagUtcSec = 12346.0)
-        engine.onObservationMessage(nowNanos = 1_100_000_000L, msgType = 1094, baseTimeTagUtcSec = 12346.0)
-        engine.onObservationMessage(nowNanos = 1_150_000_000L, msgType = 1124, baseTimeTagUtcSec = 12346.0)
+        // Epoch 2: next second
+        engine.onObservationMessage(nowNanos = 1_000_000_000L, msgType = 1074, isMoreMessagesInEpoch = true, baseTimeTagUtcSec = 12346.0)
+        engine.onObservationMessage(nowNanos = 1_050_000_000L, msgType = 1084, isMoreMessagesInEpoch = true, baseTimeTagUtcSec = 12346.0)
+        engine.onObservationMessage(nowNanos = 1_100_000_000L, msgType = 1094, isMoreMessagesInEpoch = true, baseTimeTagUtcSec = 12346.0)
+        engine.onObservationMessage(nowNanos = 1_180_000_000L, msgType = 1124, isMoreMessagesInEpoch = false, baseTimeTagUtcSec = 12346.0)
 
-        val s2 = engine.snapshot(nowNanos = 1_150_000_000L)
+        val s2 = engine.snapshot(nowNanos = 1_180_000_000L)
         assertEquals(2L, s2.epochsCompleted)
-        assertEquals(350.0, s2.lastEpochSpanMs!!, 1e-3)
-        assertEquals(4, s2.epochMessageCount)
+        assertEquals(180.0, s2.lastEpochSpanMs!!, 1e-3)
     }
 
     @Test

@@ -29,7 +29,7 @@ class EpochLatencyEngine(private val epochGapNanos: Long = DEFAULT_EPOCH_GAP_NAN
     private var firstMessageLatencyMs: Long? = null
     private var lastMessageAtNanos: Long? = null
     private var lastEpochSpanMs: Double? = null
-    private var epochsCompleted: Long = 0
+    private var epochsCount: Long = 0
     private var lastBaseTimeTagUtcSec: Double? = null
     private var currentEpochTimeTagUtcSec: Double? = null
     private var baseStationId: Int? = null
@@ -37,7 +37,7 @@ class EpochLatencyEngine(private val epochGapNanos: Long = DEFAULT_EPOCH_GAP_NAN
     private var epochStartNanos: Long = 0
     private var epochLastNanos: Long = 0
     private var epochMessageCount: Int = 0
-    private val seenMessageTypes = mutableSetOf<Int>()
+    private val seenConstellationFamilies = mutableSetOf<Int>()
 
     /** Call once when the connection attempt begins (before the first message can possibly
      * arrive) -- [firstMessageLatencyMs] is measured from here. */
@@ -49,6 +49,7 @@ class EpochLatencyEngine(private val epochGapNanos: Long = DEFAULT_EPOCH_GAP_NAN
     fun onObservationMessage(
         nowNanos: Long = System.nanoTime(),
         msgType: Int = 0,
+        isMoreMessagesInEpoch: Boolean? = null,
         baseTimeTagUtcSec: Double? = null,
         staId: Int? = null,
     ) {
@@ -64,40 +65,54 @@ class EpochLatencyEngine(private val epochGapNanos: Long = DEFAULT_EPOCH_GAP_NAN
             baseStationId = staId
         }
 
-        // Determine whether this observation message begins a NEW GNSS epoch:
-        val isNewEpoch: Boolean = when {
+        val family = getConstellationFamily(msgType)
+
+        // Check if this message starts a new epoch based on time tag or family repetition
+        val startsNewEpoch: Boolean = when {
             epochMessageCount == 0 -> true
-            baseTimeTagUtcSec != null && currentEpochTimeTagUtcSec != null -> {
-                // Time tags available for both: check if time tag changed (handling 24h midnight rollover)
-                val diffSec = kotlin.math.abs(baseTimeTagUtcSec - currentEpochTimeTagUtcSec!!)
-                val normalizedDiff = kotlin.math.min(diffSec, 86400.0 - diffSec)
-                normalizedDiff >= 0.05
-            }
-            msgType > 0 && seenMessageTypes.contains(msgType) -> {
-                // Repeating constellation message type within stream (e.g. subsequent 1074 GPS frame)
+            baseTimeTagUtcSec != null && currentEpochTimeTagUtcSec != null &&
+                kotlin.math.abs(baseTimeTagUtcSec - currentEpochTimeTagUtcSec!!).let { kotlin.math.min(it, 86400.0 - it) >= 0.05 } -> {
+                // Time tag changed to a new observation second
                 true
             }
-            else -> {
-                // Timing gap fallback for non-time-tagged messages without repeating types
-                nowNanos - epochStartNanos > epochGapNanos
+            family != 0 && seenConstellationFamilies.contains(family) -> {
+                // Constellation repeated (e.g. Next GPS MSM4 / 1074 frame)
+                true
             }
+            nowNanos - epochStartNanos > epochGapNanos -> {
+                // Timeout fallback gap (>600ms)
+                true
+            }
+            else -> false
         }
 
-        if (isNewEpoch) {
+        if (startsNewEpoch) {
             if (epochMessageCount > 0) {
                 lastEpochSpanMs = (epochLastNanos - epochStartNanos) / NANOS_PER_MS.toDouble()
             }
-            epochsCompleted++
             epochStartNanos = nowNanos
             epochMessageCount = 0
-            seenMessageTypes.clear()
+            seenConstellationFamilies.clear()
             currentEpochTimeTagUtcSec = baseTimeTagUtcSec
         }
 
         epochLastNanos = nowNanos
         epochMessageCount++
-        if (msgType > 0) {
-            seenMessageTypes.add(msgType)
+        if (family != 0) {
+            seenConstellationFamilies.add(family)
+        }
+
+        // Epoch completion detection:
+        // 1. MSM Sync flag == false (Multiple Message Bit is 0): unambiguously signals last message of epoch
+        // 2. Or if sync flag is null, each epoch start already counts the epoch
+        if (isMoreMessagesInEpoch == false) {
+            lastEpochSpanMs = (epochLastNanos - epochStartNanos) / NANOS_PER_MS.toDouble()
+            epochsCount++
+            epochMessageCount = 0
+            seenConstellationFamilies.clear()
+            currentEpochTimeTagUtcSec = null
+        } else if (isMoreMessagesInEpoch == null && startsNewEpoch) {
+            epochsCount++
         }
     }
 
@@ -106,7 +121,7 @@ class EpochLatencyEngine(private val epochGapNanos: Long = DEFAULT_EPOCH_GAP_NAN
         lastMessageAgeMs = lastMessageAtNanos?.let { (nowNanos - it) / NANOS_PER_MS } ?: 0,
         lastEpochSpanMs = lastEpochSpanMs,
         epochMessageCount = epochMessageCount,
-        epochsCompleted = epochsCompleted,
+        epochsCompleted = epochsCount,
         lastBaseTimeTagUtcSec = lastBaseTimeTagUtcSec,
         baseStationId = baseStationId,
     )
@@ -116,18 +131,31 @@ class EpochLatencyEngine(private val epochGapNanos: Long = DEFAULT_EPOCH_GAP_NAN
         firstMessageLatencyMs = null
         lastMessageAtNanos = null
         lastEpochSpanMs = null
-        epochsCompleted = 0
+        epochsCount = 0
         lastBaseTimeTagUtcSec = null
         currentEpochTimeTagUtcSec = null
         baseStationId = null
         epochStartNanos = 0
         epochLastNanos = 0
         epochMessageCount = 0
-        seenMessageTypes.clear()
+        seenConstellationFamilies.clear()
     }
 
     companion object {
         private const val DEFAULT_EPOCH_GAP_NANOS = 600_000_000L // 600ms fallback gap
         private const val NANOS_PER_MS = 1_000_000L
+
+        fun getConstellationFamily(msgType: Int): Int {
+            return when (msgType) {
+                in 1071..1077, in 1001..1004 -> 1 // GPS
+                in 1081..1087, in 1009..1012 -> 2 // GLONASS
+                in 1091..1097 -> 3 // Galileo
+                in 1101..1107 -> 4 // SBAS
+                in 1111..1117 -> 5 // QZSS
+                in 1121..1127 -> 6 // BeiDou
+                in 1131..1137 -> 7 // NavIC
+                else -> 0
+            }
+        }
     }
 }
