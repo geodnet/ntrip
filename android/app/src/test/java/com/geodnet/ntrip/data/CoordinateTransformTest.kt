@@ -136,5 +136,17 @@ class CoordinateTransformTest {
         val unchanged = CoordinateTransform.transformForMapDisplay(lat, lon, h, "WGS84(G2139)")
         assertEquals(lat, unchanged.latDeg, 1e-9)
         assertEquals(lon, unchanged.lonDeg, 1e-9)
+
+        // Single solution (fixQuality == 1) should NOT be transformed (stays in broadcast WGS84)
+        val singleSolution = CoordinateTransform.transformForMapDisplay(lat, lon, h, "NAD83(2011)", fixQuality = 1)
+        assertEquals(lat, singleSolution.latDeg, 1e-9)
+        assertEquals(lon, singleSolution.lonDeg, 1e-9)
+        assertEquals(h, singleSolution.heightM, 1e-4)
+
+        // DGPS (fixQuality == 2) and RTK Float (fixQuality == 5) should be transformed
+        val dgpsSolution = CoordinateTransform.transformForMapDisplay(lat, lon, h, "NAD83(2011)", fixQuality = 2)
+        assertTrue(dgpsSolution.latDeg != lat)
+        val rtkFloatSolution = CoordinateTransform.transformForMapDisplay(lat, lon, h, "NAD83(2011)", fixQuality = 5)
+        assertTrue(rtkFloatSolution.latDeg != lat)
     }
 }

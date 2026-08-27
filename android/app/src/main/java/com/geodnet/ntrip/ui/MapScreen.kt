@@ -235,7 +235,7 @@ fun MapScreen(viewModel: NtripViewModel) {
         bestFix?.let { fix ->
             if (fix.latitude != 0.0 || fix.longitude != 0.0) {
                 val pt = com.geodnet.ntrip.data.CoordinateTransform.transformForMapDisplay(
-                    fix.latitude, fix.longitude, fix.altitudeM, datumInfo.name
+                    fix.latitude, fix.longitude, fix.altitudeM, datumInfo.name, fix.fixQuality
                 )
                 fix.copy(latitude = pt.latDeg, longitude = pt.lonDeg, altitudeM = pt.heightM)
             } else fix
@@ -716,8 +716,8 @@ private fun MapSurveyHud(
 private fun trajectoryJson(points: List<PositionFix>, datumName: String = ""): String {
     val arr = JSONArray()
     for (p in points) {
-        val pt = if (datumName.isNotBlank()) {
-            com.geodnet.ntrip.data.CoordinateTransform.transformForMapDisplay(p.latitude, p.longitude, p.altitudeM, datumName)
+        val pt = if (datumName.isNotBlank() && p.fixQuality in listOf(2, 4, 5)) {
+            com.geodnet.ntrip.data.CoordinateTransform.transformForMapDisplay(p.latitude, p.longitude, p.altitudeM, datumName, p.fixQuality)
         } else null
         val lat = pt?.latDeg ?: p.latitude
         val lon = pt?.lonDeg ?: p.longitude

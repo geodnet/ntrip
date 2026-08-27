@@ -409,14 +409,19 @@ object CoordinateTransform {
      * Converts regional tectonic-plate coordinates (EU: ETRS89/ETRF2000, AUS: GDA2020, NZ: NZGD2000,
      * SA: SIRGAS2000 / South Africa, USA: NAD83(2011)/PA11/MA11/CSRS, Asia: ITRF2014/ITRF2008/CGCS2000)
      * back to global WGS84 / ITRF2020 so rover positions and static surveys align accurately on the map.
+     *
+     * Only applies transformation for differential / RTK solutions (fixQuality: 2 = DGPS, 4 = RTK Fix, 5 = RTK Float).
+     * Single solutions (fixQuality == 1) and autonomous fixes are directly in broadcast WGS84, so they do NOT need datum conversion.
      */
     fun transformForMapDisplay(
         latDeg: Double,
         lonDeg: Double,
         heightM: Double,
-        datumName: String
+        datumName: String,
+        fixQuality: Int = 4,
     ): Point3D {
         if (latDeg == 0.0 && lonDeg == 0.0) return Point3D(latDeg, lonDeg, heightM)
+        if (fixQuality !in listOf(2, 4, 5)) return Point3D(latDeg, lonDeg, heightM)
 
         val nameUpper = datumName.uppercase()
 
