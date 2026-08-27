@@ -178,107 +178,149 @@ class GeodnetCoverageRepository(private val context: Context) {
     companion object {
         fun parseStationsJson(jsonStr: String): List<GeodnetStation> {
             if (jsonStr.isBlank()) return emptyList()
-            val list = ArrayList<GeodnetStation>(2048)
+            val list = ArrayList<GeodnetStation>(20000)
             val len = jsonStr.length
-            var pos = 0
+            var i = 0
 
             try {
-                while (pos < len) {
-                    val nameIdx = jsonStr.indexOf("\"name\"", pos)
+                while (i < len) {
+                    val nameIdx = jsonStr.indexOf("\"name\"", i)
                     if (nameIdx == -1) break
 
-                    val colonAfterName = jsonStr.indexOf(':', nameIdx + 6)
-                    if (colonAfterName == -1) break
-                    val openQuote = jsonStr.indexOf('"', colonAfterName + 1)
-                    if (openQuote == -1) break
-                    val closeQuote = jsonStr.indexOf('"', openQuote + 1)
-                    if (closeQuote == -1) break
-                    val name = jsonStr.substring(openQuote + 1, closeQuote)
-
-                    // Optional "status"
-                    var status = "ACTIVE"
-                    val statusIdx = jsonStr.indexOf("\"status\"", closeQuote)
-                    var statusEnd = closeQuote
-                    if (statusIdx != -1 && statusIdx - closeQuote < 60) {
-                        val statusColon = jsonStr.indexOf(':', statusIdx + 8)
-                        if (statusColon != -1) {
-                            val stOpen = jsonStr.indexOf('"', statusColon + 1)
-                            if (stOpen != -1) {
-                                val stClose = jsonStr.indexOf('"', stOpen + 1)
-                                if (stClose != -1) {
-                                    status = jsonStr.substring(stOpen + 1, stClose).trim()
-                                    statusEnd = stClose
-                                }
-                            }
-                        }
-                    }
-
-                    // Optional RTCM Station ID (e.g. "rtcm_station_id", "rtcmStationId", "station_id", "sta_id", "rtcm_id", "id")
-                    var rtcmStationId: Int? = null
-                    val rtcmKeys = listOf("\"rtcm_station_id\"", "\"rtcmStationId\"", "\"station_id\"", "\"sta_id\"", "\"staId\"", "\"rtcm_id\"", "\"rtcmId\"")
-                    for (k in rtcmKeys) {
-                        val rIdx = jsonStr.indexOf(k, statusEnd)
-                        if (rIdx != -1 && rIdx - statusEnd < 200) {
-                            val rColon = jsonStr.indexOf(':', rIdx + k.length)
-                            if (rColon != -1) {
-                                var vStart = rColon + 1
-                                while (vStart < len && (jsonStr[vStart] == ' ' || jsonStr[vStart] == '\t' || jsonStr[vStart] == '"')) vStart++
-                                var vEnd = vStart
-                                while (vEnd < len && jsonStr[vEnd].isDigit()) vEnd++
-                                if (vEnd > vStart) {
-                                    rtcmStationId = jsonStr.substring(vStart, vEnd).toIntOrNull()
-                                    if (rtcmStationId != null) break
-                                }
-                            }
-                        }
-                    }
-                    if (rtcmStationId == null) {
-                        rtcmStationId = name.takeLast(5).toIntOrNull() ?: name.filter { it.isDigit() }.toIntOrNull()
-                    }
-
-                    // Find "lat" within next 300 chars
-                    val latIdx = jsonStr.indexOf("\"lat\"", statusEnd)
-                    if (latIdx == -1 || latIdx - statusEnd > 300) {
-                        pos = statusEnd + 1
+                    // Find the '{' before "name"
+                    var objStart = nameIdx
+                    while (objStart >= i && jsonStr[objStart] != '{') objStart--
+                    if (objStart < i) {
+                        i = nameIdx + 6
                         continue
                     }
-                    val latColon = jsonStr.indexOf(':', latIdx + 5)
-                    if (latColon == -1) break
-                    var latEnd = latColon + 1
-                    while (latEnd < len && (jsonStr[latEnd] == ' ' || jsonStr[latEnd] == '\t')) latEnd++
-                    val latStart = latEnd
-                    while (latEnd < len && (jsonStr[latEnd].isDigit() || jsonStr[latEnd] == '-' || jsonStr[latEnd] == '.' || jsonStr[latEnd] == 'e' || jsonStr[latEnd] == 'E' || jsonStr[latEnd] == '+')) {
-                        latEnd++
-                    }
-                    val lat = jsonStr.substring(latStart, latEnd).toDoubleOrNull()
 
-                    // Find "lng" within next 300 chars
-                    val lngIdx = jsonStr.indexOf("\"lng\"", latEnd)
-                    if (lngIdx == -1 || lngIdx - latEnd > 300) {
-                        pos = latEnd
-                        continue
+                    // Find matching '}' for this object
+                    var depth = 0
+                    var objEnd = objStart
+                    var inString = false
+                    while (objEnd < len) {
+                        val c = jsonStr[objEnd]
+                        if (c == '"' && (objEnd == 0 || jsonStr[objEnd - 1] != '\\')) {
+                            inString = !inString
+                        } else if (!inString) {
+                            if (c == '{') depth++
+                            else if (c == '}') {
+                                depth--
+                                if (depth == 0) break
+                            }
+                        }
+                        objEnd++
                     }
-                    val lngColon = jsonStr.indexOf(':', lngIdx + 5)
-                    if (lngColon == -1) break
-                    var lngEnd = lngColon + 1
-                    while (lngEnd < len && (jsonStr[lngEnd] == ' ' || jsonStr[lngEnd] == '\t')) lngEnd++
-                    val lngStart = lngEnd
-                    while (lngEnd < len && (jsonStr[lngEnd].isDigit() || jsonStr[lngEnd] == '-' || jsonStr[lngEnd] == '.' || jsonStr[lngEnd] == 'e' || jsonStr[lngEnd] == 'E' || jsonStr[lngEnd] == '+')) {
-                        lngEnd++
-                    }
-                    val lng = jsonStr.substring(lngStart, lngEnd).toDoubleOrNull()
+                    if (objEnd >= len) break
 
-                    if (lat != null && lng != null) {
-                        list.add(GeodnetStation(name = name, lat = lat, lng = lng, status = status, rtcmStationId = rtcmStationId))
-                        pos = lngEnd
-                    } else {
-                        pos = closeQuote + 1
-                    }
+                    val objStr = jsonStr.substring(objStart, objEnd + 1)
+                    parseSingleStation(objStr)?.let { list.add(it) }
+
+                    i = objEnd + 1
                 }
             } catch (_: Exception) {
                 return emptyList()
             }
             return list
+        }
+
+        private fun parseSingleStation(objStr: String): GeodnetStation? {
+            val len = objStr.length
+            var name: String? = null
+            var status = "ACTIVE"
+            var rtcmStationId: Int? = null
+            var lat: Double? = null
+            var lng: Double? = null
+
+            var i = 0
+            while (i < len) {
+                if (objStr[i] == '"') {
+                    i++
+                    val kStart = i
+                    while (i < len && objStr[i] != '"') i++
+                    val key = objStr.substring(kStart, i)
+                    if (i < len) i++ // skip quote
+
+                    while (i < len && (objStr[i] == ' ' || objStr[i] == ':' || objStr[i] == '\t')) i++
+
+                    when (key) {
+                        "name" -> {
+                            if (i < len && objStr[i] == '"') {
+                                i++
+                                val vStart = i
+                                while (i < len && objStr[i] != '"') i++
+                                name = objStr.substring(vStart, i)
+                                if (i < len) i++
+                            }
+                        }
+                        "status" -> {
+                            if (i < len && objStr[i] == '"') {
+                                i++
+                                val vStart = i
+                                while (i < len && objStr[i] != '"') i++
+                                status = objStr.substring(vStart, i)
+                                if (i < len) i++
+                            }
+                        }
+                        "stationId", "station_id", "rtcmStationId", "rtcm_station_id", "staId", "sta_id", "rtcmId", "rtcm_id", "id" -> {
+                            if (i < len && objStr[i] == '"') {
+                                i++
+                                val vStart = i
+                                while (i < len && objStr[i] != '"') i++
+                                rtcmStationId = objStr.substring(vStart, i).toIntOrNull()
+                                if (i < len) i++
+                            } else {
+                                val vStart = i
+                                while (i < len && (objStr[i].isDigit() || objStr[i] == '-')) i++
+                                rtcmStationId = objStr.substring(vStart, i).toIntOrNull()
+                            }
+                        }
+                        "lat", "latitude" -> {
+                            if (i < len && objStr[i] == '"') {
+                                i++
+                                val vStart = i
+                                while (i < len && objStr[i] != '"') i++
+                                lat = objStr.substring(vStart, i).toDoubleOrNull()
+                                if (i < len) i++
+                            } else {
+                                val vStart = i
+                                while (i < len && (objStr[i].isDigit() || objStr[i] == '-' || objStr[i] == '.' || objStr[i] == 'e' || objStr[i] == 'E' || objStr[i] == '+')) i++
+                                lat = objStr.substring(vStart, i).toDoubleOrNull()
+                            }
+                        }
+                        "lng", "lon", "longitude" -> {
+                            if (i < len && objStr[i] == '"') {
+                                i++
+                                val vStart = i
+                                while (i < len && objStr[i] != '"') i++
+                                lng = objStr.substring(vStart, i).toDoubleOrNull()
+                                if (i < len) i++
+                            } else {
+                                val vStart = i
+                                while (i < len && (objStr[i].isDigit() || objStr[i] == '-' || objStr[i] == '.' || objStr[i] == 'e' || objStr[i] == 'E' || objStr[i] == '+')) i++
+                                lng = objStr.substring(vStart, i).toDoubleOrNull()
+                            }
+                        }
+                    }
+                } else {
+                    i++
+                }
+            }
+
+            if (!name.isNullOrBlank() && lat != null && lng != null) {
+                if (rtcmStationId == null) {
+                    rtcmStationId = name.takeLast(5).toIntOrNull() ?: name.filter { it.isDigit() }.toIntOrNull()
+                }
+                return GeodnetStation(
+                    name = name,
+                    lat = lat,
+                    lng = lng,
+                    status = status,
+                    rtcmStationId = rtcmStationId
+                )
+            }
+            return null
         }
 
         /**

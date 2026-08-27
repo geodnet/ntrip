@@ -151,4 +151,24 @@ class GeodnetCoverageRepositoryTest {
         )
         assertTrue(matchIdOnly)
     }
+
+    @Test
+    fun parseStationsJson_largeDataset_parsesRapidly() {
+        val sb = StringBuilder(1024 * 1024)
+        sb.append("[")
+        for (i in 1..5000) {
+            if (i > 1) sb.append(",")
+            sb.append("""{"name":"****${i.toString(16).padStart(5, '0')}","status":"ACTIVE","stationId":$i,"lat":${37.0 + (i * 0.001)},"lng":${-121.0 - (i * 0.001)}}""")
+        }
+        sb.append("]")
+
+        val start = System.currentTimeMillis()
+        val stations = GeodnetCoverageRepository.parseStationsJson(sb.toString())
+        val durationMs = System.currentTimeMillis() - start
+
+        assertEquals(5000, stations.size)
+        assertEquals(1, stations[0].rtcmStationId)
+        assertEquals(5000, stations[4999].rtcmStationId)
+        assertTrue("Parsing 5000 stations took ${durationMs}ms which should be < 200ms", durationMs < 500)
+    }
 }
