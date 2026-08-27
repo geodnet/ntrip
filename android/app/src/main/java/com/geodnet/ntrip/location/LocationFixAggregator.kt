@@ -18,24 +18,22 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * Combines the BLE RTK receiver's fix (when connected) with the phone's own GPS as a fallback
- * into a single "best fix" stream -- this is what drives [MockLocationProvider] and the NMEA TCP
- * server. BLE always takes priority when connected (that's the whole point of this app); the
- * phone GPS only fills in when there's no receiver attached, mirroring the "Smart Phone Location
- * GGA Fallback" behavior described in readme.md (which describes the same fallback for GGA
- * upload to the caster -- this reuses the idea for the mock-location/NMEA-server outputs).
+ * Combines the BLE RTK receiver's fix (when valid) with the phone's own GPS as a fallback
+ * into a single "best fix" stream -- this is what drives [MockLocationProvider], the NMEA TCP
+ * server, and the live GGA upload to the NTRIP Caster.
  *
- * Owned by NtripForegroundService so its outputs survive the app being backgrounded the same way
- * the caster connection does; fed BLE fixes/lines via [onBleConnectionChanged]/[onBleFix]/
- * [onBleRawLine], which NtripViewModel calls after collecting them from BleRtkReceiver (which is
- * itself Activity/ViewModel-scoped, not service-scoped -- see android/CLAUDE.md's BLE gap).
+ * Priority rules:
+ * 1. If the BLE receiver is connected AND sending a valid GGA (fixQuality > 0 and coordinates != 0.0),
+ *    the BLE fix is used.
+ * 2. If the BLE receiver is not connected, OR is searching for satellites (fixQuality == 0 / 0.0 coordinates),
+ *    OR stops sending updates, it automatically falls back to the phone's GPS position.
  */
 class LocationFixAggregator(private val context: Context) {
 
     private val _fix = MutableStateFlow<PositionFix?>(null)
     val fix: StateFlow<PositionFix?> = _fix.asStateFlow()
 
-    /** NMEA lines to forward to the NMEA TCP server: BLE lines verbatim when connected, else a
+    /** NMEA lines to forward to the NMEA TCP server: BLE lines verbatim when valid, else a
      * synthesized $GPGGA built from the phone fallback fix. */
     private val _nmeaLine = MutableSharedFlow<String>(
         replay = 0,
@@ -46,54 +44,92 @@ class LocationFixAggregator(private val context: Context) {
 
     private var bleConnected = false
     private var phoneListening = false
+    private var latestBleFix: PositionFix? = null
+    private var latestPhoneLocation: Location? = null
     private val locationManager = context.getSystemService(LocationManager::class.java)
     private val phoneListener = LocationListener { location -> onPhoneLocation(location) }
 
-    /** Call whenever the BLE receiver connects/disconnects: switches the fallback phone-GPS
-     * listener on/off and clears any stale BLE fix. */
+    init {
+        // Start phone GPS in standby immediately so coordinates are available right from launch
+        startPhoneUpdates()
+    }
+
+    /** Helper to check if a BLE fix has an active valid solution. */
+    private fun isBleFixValid(fix: PositionFix?): Boolean {
+        if (fix == null) return false
+        if (fix.fixQuality <= 0) return false
+        if (fix.latitude == 0.0 && fix.longitude == 0.0) return false
+        // Stale if no update within 6 seconds
+        if (System.currentTimeMillis() - fix.timestampMs > 6000L) return false
+        return true
+    }
+
+    /** Call whenever the BLE receiver connects/disconnects. */
     fun onBleConnectionChanged(connected: Boolean) {
-        if (bleConnected == connected) return
         bleConnected = connected
-        if (connected) {
-            stopPhoneUpdates()
-            _fix.value = null
-        } else {
-            startPhoneUpdates()
+        if (!connected) {
+            latestBleFix = null
+            fallbackToPhoneFix()
         }
+        startPhoneUpdates()
     }
 
     /** Call with every new GGA sentence parsed from the BLE receiver. */
     fun onBleFix(sentence: NmeaSentence.Gga) {
         if (!bleConnected) return
-        _fix.value = PositionFix(
-            source = FixSource.BLE,
-            latitude = sentence.latitude,
-            longitude = sentence.longitude,
-            altitudeM = sentence.altitudeM,
-            fixQuality = sentence.fixQuality,
-            numSatellites = sentence.numSatellites,
-            hdop = sentence.hdop,
-            timestampMs = System.currentTimeMillis(),
-            utcTime = sentence.utcTime,
-            diffAgeSec = sentence.diffAgeSec,
-            diffStationId = sentence.diffStationId,
-            geoidSeparationM = sentence.geoidSeparationM,
-            rawNmeaGga = sentence.rawSentence,
-        )
+
+        val isValidGga = sentence.fixQuality > 0 && (sentence.latitude != 0.0 || sentence.longitude != 0.0)
+
+        if (isValidGga) {
+            val bleFix = PositionFix(
+                source = FixSource.BLE,
+                latitude = sentence.latitude,
+                longitude = sentence.longitude,
+                altitudeM = sentence.altitudeM,
+                fixQuality = sentence.fixQuality,
+                numSatellites = sentence.numSatellites,
+                hdop = sentence.hdop,
+                timestampMs = System.currentTimeMillis(),
+                utcTime = sentence.utcTime,
+                diffAgeSec = sentence.diffAgeSec,
+                diffStationId = sentence.diffStationId,
+                geoidSeparationM = sentence.geoidSeparationM,
+                rawNmeaGga = sentence.rawSentence,
+            )
+            latestBleFix = bleFix
+            _fix.value = bleFix
+        } else {
+            // No valid GGA from BLE receiver -> fallback to phone position
+            latestBleFix = null
+            fallbackToPhoneFix()
+        }
     }
 
-    /** Call with every raw NMEA line received from the BLE receiver, for verbatim forwarding to
-     * the NMEA TCP server (preserves sentences this app doesn't itself parse, e.g. $GNRMC/$GNGST
-     * beyond what feeds [onBleFix]). */
+    /** Fallback to phone position if available. */
+    private fun fallbackToPhoneFix() {
+        val phoneLoc = latestPhoneLocation ?: fetchLastKnownPhoneLocation()
+        if (phoneLoc != null) {
+            latestPhoneLocation = phoneLoc
+            val phoneFix = buildPhonePositionFix(phoneLoc)
+            _fix.value = phoneFix
+            _nmeaLine.tryEmit(
+                GgaGenerator.generate(phoneFix.latitude, phoneFix.longitude, phoneFix.altitudeM, phoneFix.numSatellites, phoneFix.hdop)
+            )
+        } else if (_fix.value?.source == FixSource.BLE) {
+            _fix.value = null
+        }
+    }
+
+    /** Call with every raw NMEA line received from the BLE receiver. */
     fun onBleRawLine(line: String) {
-        if (bleConnected) _nmeaLine.tryEmit(line)
+        if (bleConnected && isBleFixValid(latestBleFix)) {
+            _nmeaLine.tryEmit(line)
+        }
     }
 
-    /** Starts listening for the phone's own GPS/network location as the no-BLE fallback. No-ops
-     * (and stays no-op until the next call) if location permission isn't granted -- the caller
-     * doesn't need to check first. */
+    /** Starts listening for the phone's own GPS/network location as the fallback. */
     fun startPhoneUpdates() {
-        if (phoneListening || bleConnected) return
+        if (phoneListening) return
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) !=
             PackageManager.PERMISSION_GRANTED &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) !=
@@ -108,27 +144,31 @@ class LocationFixAggregator(private val context: Context) {
             else -> null
         } ?: return
         try {
-            // Deliver last known location immediately if available
-            val lastLoc = locationManager?.getLastKnownLocation(provider)
-                ?: locationManager?.getLastKnownLocation(LocationManager.PASSIVE_PROVIDER)
-            if (lastLoc != null && _fix.value == null) {
-                onPhoneLocation(lastLoc)
+            val lastLoc = fetchLastKnownPhoneLocation()
+            if (lastLoc != null) {
+                latestPhoneLocation = lastLoc
+                if (!bleConnected || !isBleFixValid(latestBleFix)) {
+                    fallbackToPhoneFix()
+                }
             }
             locationManager?.requestLocationUpdates(provider, PHONE_UPDATE_INTERVAL_MS, 0f, phoneListener)
             phoneListening = true
         } catch (_: SecurityException) {
-            // permission revoked between the check above and this call -- stay stopped
+            // permission revoked between check and call
         }
     }
 
-    fun stopPhoneUpdates() {
-        if (!phoneListening) return
-        locationManager?.removeUpdates(phoneListener)
-        phoneListening = false
+    private fun fetchLastKnownPhoneLocation(): Location? {
+        return try {
+            locationManager?.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+                ?: locationManager?.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+                ?: locationManager?.getLastKnownLocation(LocationManager.PASSIVE_PROVIDER)
+        } catch (_: SecurityException) {
+            null
+        }
     }
 
-    private fun onPhoneLocation(location: Location) {
-        if (bleConnected) return
+    private fun buildPhonePositionFix(location: Location): PositionFix {
         val rawSats = if (location.extras?.containsKey("satellites") == true) {
             location.extras!!.getInt("satellites")
         } else {
@@ -140,7 +180,7 @@ class LocationFixAggregator(private val context: Context) {
         } else {
             1.0
         }
-        val fix = PositionFix(
+        return PositionFix(
             source = FixSource.PHONE,
             latitude = location.latitude,
             longitude = location.longitude,
@@ -148,8 +188,24 @@ class LocationFixAggregator(private val context: Context) {
             fixQuality = 1,
             numSatellites = satellites,
             hdop = hdop,
-            timestampMs = location.time,
+            timestampMs = location.time.takeIf { it > 0 } ?: System.currentTimeMillis(),
         )
+    }
+
+    fun stopPhoneUpdates() {
+        if (!phoneListening) return
+        locationManager?.removeUpdates(phoneListener)
+        phoneListening = false
+    }
+
+    private fun onPhoneLocation(location: Location) {
+        latestPhoneLocation = location
+        // If BLE currently has a valid fix, keep phone location in standby
+        if (bleConnected && isBleFixValid(latestBleFix)) {
+            return
+        }
+        // Otherwise, use phone position as the active fix
+        val fix = buildPhonePositionFix(location)
         _fix.value = fix
         _nmeaLine.tryEmit(
             GgaGenerator.generate(fix.latitude, fix.longitude, fix.altitudeM, fix.numSatellites, fix.hdop),
