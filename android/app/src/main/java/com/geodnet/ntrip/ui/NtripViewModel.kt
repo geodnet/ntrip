@@ -277,19 +277,10 @@ class NtripViewModel(app: Application) : AndroidViewModel(app) {
             loadCoverageStations()
         }
         viewModelScope.launch {
-            _bestFix.collect { fix ->
-                if (fix != null) {
-                    updateNearbyStations(fix.latitude, fix.longitude)
-                } else {
-                    val phoneLoc = getPhoneLastLocation()
-                    if (phoneLoc != null) {
-                        updateNearbyStations(phoneLoc.latitude, phoneLoc.longitude)
-                    } else {
-                        val cfg = _config.value
-                        if (cfg.latitude != 0.0 || cfg.longitude != 0.0) {
-                            updateNearbyStations(cfg.latitude, cfg.longitude)
-                        }
-                    }
+            _bestFix.collect { _ ->
+                val coords = getEffectiveDiscoveryCoordinates()
+                if (coords != null) {
+                    updateNearbyStations(coords.first, coords.second)
                 }
             }
         }
@@ -449,23 +440,51 @@ class NtripViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Resolves the best coordinates for GEODNET Base Station Discovery:
+     * 1. Uses BLE RTK Receiver NMEA GGA if it has a valid fix (fixQuality > 0 and non-zero coordinates).
+     * 2. If no valid BLE GGA is available (e.g. no BLE connected, receiver searching for satellites, fixQuality == 0),
+     *    falls back to the Phone GPS location.
+     * 3. If phone location is unavailable, falls back to manually configured caster coordinates.
+     */
+    private fun getEffectiveDiscoveryCoordinates(): Pair<Double, Double>? {
+        // 1. Check if BLE receiver has a valid GGA fix
+        val bleFix = bleReceiver.state.value.latestFix
+        if (bleFix != null && bleFix.fixQuality > 0 && (bleFix.latitude != 0.0 || bleFix.longitude != 0.0)) {
+            return Pair(bleFix.latitude, bleFix.longitude)
+        }
+
+        val best = _bestFix.value
+        if (best != null && best.source == com.geodnet.ntrip.location.FixSource.BLE && best.fixQuality > 0 && (best.latitude != 0.0 || best.longitude != 0.0)) {
+            return Pair(best.latitude, best.longitude)
+        }
+
+        // 2. No valid BLE fix -> Fallback to Phone GPS position
+        val phoneLoc = getPhoneLastLocation()
+        if (phoneLoc != null && (phoneLoc.latitude != 0.0 || phoneLoc.longitude != 0.0)) {
+            return Pair(phoneLoc.latitude, phoneLoc.longitude)
+        }
+
+        if (best != null && (best.latitude != 0.0 || best.longitude != 0.0)) {
+            return Pair(best.latitude, best.longitude)
+        }
+
+        // 3. Fallback to configured coordinates
+        val cfg = _config.value
+        if (cfg.latitude != 0.0 || cfg.longitude != 0.0) {
+            return Pair(cfg.latitude, cfg.longitude)
+        }
+
+        return null
+    }
+
     suspend fun loadCoverageStations(forceRefresh: Boolean = false) {
         _isCoverageLoading.value = true
         try {
             coverageRepository.loadStations(forceRefresh)
-            val fix = _bestFix.value
-            if (fix != null) {
-                updateNearbyStations(fix.latitude, fix.longitude)
-            } else {
-                val phoneLoc = getPhoneLastLocation()
-                if (phoneLoc != null) {
-                    updateNearbyStations(phoneLoc.latitude, phoneLoc.longitude)
-                } else {
-                    val cfg = _config.value
-                    if (cfg.latitude != 0.0 || cfg.longitude != 0.0) {
-                        updateNearbyStations(cfg.latitude, cfg.longitude)
-                    }
-                }
+            val coords = getEffectiveDiscoveryCoordinates()
+            if (coords != null) {
+                updateNearbyStations(coords.first, coords.second, force = true)
             }
         } finally {
             _isCoverageLoading.value = false
@@ -481,11 +500,11 @@ class NtripViewModel(app: Application) : AndroidViewModel(app) {
     private var lastNearbyCheckLat: Double? = null
     private var lastNearbyCheckLon: Double? = null
 
-    private fun updateNearbyStations(lat: Double, lon: Double) {
+    private fun updateNearbyStations(lat: Double, lon: Double, force: Boolean = false) {
         if (lat == 0.0 && lon == 0.0) return
         val lastLat = lastNearbyCheckLat
         val lastLon = lastNearbyCheckLon
-        if (lastLat != null && lastLon != null && _nearbyStations.value.isNotEmpty()) {
+        if (!force && lastLat != null && lastLon != null && _nearbyStations.value.isNotEmpty()) {
             val dist = GeodnetCoverageRepository.haversineDistanceKm(lat, lon, lastLat, lastLon)
             if (dist < 1.0) return
         }
