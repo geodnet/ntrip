@@ -1934,6 +1934,56 @@ private fun GeodnetCoverageCard(
                 }
             }
 
+            val hasActiveWithin40km = nearbyStations.any {
+                it.distanceKm <= 40.0 && it.status.equals("ACTIVE", ignoreCase = true)
+            }
+
+            if (!hasActiveWithin40km) {
+                val context = LocalContext.current
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text("📡", fontSize = 18.sp)
+                            Text(
+                                "No Active Base Station Within 40 km",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        Text(
+                            "For reliable centimeter-level RTK fix accuracy, an active base station within 40 km is recommended. Host your own GEODNET RTK base station to provide local coverage and earn rewards.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Button(
+                            onClick = {
+                                try {
+                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://store.geodnet.com/"))
+                                    context.startActivity(intent)
+                                } catch (_: Exception) {}
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("🛒 Purchase / Host Base Station (store.geodnet.com)", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
+
             if (nearbyStations.isNotEmpty()) {
                 val activeStation = nearbyStations.find { isStationMatched(it) }
                 val targetStation = activeStation ?: nearbyStations.first()
