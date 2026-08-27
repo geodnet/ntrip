@@ -192,7 +192,11 @@ class RtcmFrameParser(private val refPosition: () -> Triple<Double, Double, Doub
                     // Ignore decode errors
                 }
             }
-            epochEngine.onObservationMessage(baseTimeTagUtcSec = baseTimeTagUtcSec, staId = staId)
+            epochEngine.onObservationMessage(
+                msgType = msgType,
+                baseTimeTagUtcSec = baseTimeTagUtcSec,
+                staId = staId
+            )
             _epochStats.value = epochEngine.snapshot()
         }
 

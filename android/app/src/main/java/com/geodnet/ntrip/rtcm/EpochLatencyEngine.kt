@@ -31,11 +31,13 @@ class EpochLatencyEngine(private val epochGapNanos: Long = DEFAULT_EPOCH_GAP_NAN
     private var lastEpochSpanMs: Double? = null
     private var epochsCompleted: Long = 0
     private var lastBaseTimeTagUtcSec: Double? = null
+    private var currentEpochTimeTagUtcSec: Double? = null
     private var baseStationId: Int? = null
 
     private var epochStartNanos: Long = 0
     private var epochLastNanos: Long = 0
     private var epochMessageCount: Int = 0
+    private val seenMessageTypes = mutableSetOf<Int>()
 
     /** Call once when the connection attempt begins (before the first message can possibly
      * arrive) -- [firstMessageLatencyMs] is measured from here. */
@@ -46,6 +48,7 @@ class EpochLatencyEngine(private val epochGapNanos: Long = DEFAULT_EPOCH_GAP_NAN
     /** Call for every observation-carrying message (MSM / legacy 100x) as it arrives. */
     fun onObservationMessage(
         nowNanos: Long = System.nanoTime(),
+        msgType: Int = 0,
         baseTimeTagUtcSec: Double? = null,
         staId: Int? = null,
     ) {
@@ -61,18 +64,41 @@ class EpochLatencyEngine(private val epochGapNanos: Long = DEFAULT_EPOCH_GAP_NAN
             baseStationId = staId
         }
 
-        if (epochMessageCount == 0 || nowNanos - epochLastNanos > epochGapNanos) {
-            if (epochMessageCount > 0) closeEpoch()
-            epochStartNanos = nowNanos
+        // Determine whether this observation message begins a NEW GNSS epoch:
+        val isNewEpoch: Boolean = when {
+            epochMessageCount == 0 -> true
+            baseTimeTagUtcSec != null && currentEpochTimeTagUtcSec != null -> {
+                // Time tags available for both: check if time tag changed (handling 24h midnight rollover)
+                val diffSec = kotlin.math.abs(baseTimeTagUtcSec - currentEpochTimeTagUtcSec!!)
+                val normalizedDiff = kotlin.math.min(diffSec, 86400.0 - diffSec)
+                normalizedDiff >= 0.05
+            }
+            msgType > 0 && seenMessageTypes.contains(msgType) -> {
+                // Repeating constellation message type within stream (e.g. subsequent 1074 GPS frame)
+                true
+            }
+            else -> {
+                // Timing gap fallback for non-time-tagged messages without repeating types
+                nowNanos - epochStartNanos > epochGapNanos
+            }
         }
+
+        if (isNewEpoch) {
+            if (epochMessageCount > 0) {
+                lastEpochSpanMs = (epochLastNanos - epochStartNanos) / NANOS_PER_MS.toDouble()
+            }
+            epochsCompleted++
+            epochStartNanos = nowNanos
+            epochMessageCount = 0
+            seenMessageTypes.clear()
+            currentEpochTimeTagUtcSec = baseTimeTagUtcSec
+        }
+
         epochLastNanos = nowNanos
         epochMessageCount++
-    }
-
-    private fun closeEpoch() {
-        lastEpochSpanMs = (epochLastNanos - epochStartNanos) / NANOS_PER_MS.toDouble()
-        epochsCompleted++
-        epochMessageCount = 0
+        if (msgType > 0) {
+            seenMessageTypes.add(msgType)
+        }
     }
 
     fun snapshot(nowNanos: Long = System.nanoTime()): EpochLatencyStats = EpochLatencyStats(
@@ -92,14 +118,16 @@ class EpochLatencyEngine(private val epochGapNanos: Long = DEFAULT_EPOCH_GAP_NAN
         lastEpochSpanMs = null
         epochsCompleted = 0
         lastBaseTimeTagUtcSec = null
+        currentEpochTimeTagUtcSec = null
         baseStationId = null
         epochStartNanos = 0
         epochLastNanos = 0
         epochMessageCount = 0
+        seenMessageTypes.clear()
     }
 
     companion object {
-        private const val DEFAULT_EPOCH_GAP_NANOS = 200_000_000L // 200ms
+        private const val DEFAULT_EPOCH_GAP_NANOS = 600_000_000L // 600ms fallback gap
         private const val NANOS_PER_MS = 1_000_000L
     }
 }
